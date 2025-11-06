@@ -4,7 +4,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.utils.discovery import all_estimators
 from sklearn.datasets import make_classification
 from openmodels.test_helpers import run_test_model
-from openmodels.serializers.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
 
 # Get all classifier estimators, filtering out not supported classifiers
 CLASSIFIERS = [cls for name, cls in all_estimators(type_filter="classifier")

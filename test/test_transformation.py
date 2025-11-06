@@ -11,7 +11,7 @@ from openmodels.test_helpers import (
     test_feature_hasher_serialization,
     test_generic_univariate_select_serialization,
 )
-from openmodels.serializers.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
 from test.test_regression import REGRESSORS
 from test.test_classification import CLASSIFIERS
 

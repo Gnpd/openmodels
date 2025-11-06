@@ -7,7 +7,7 @@ from sklearn.feature_extraction import FeatureHasher
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from openmodels.test_helpers import run_test_model
-from openmodels.serializers.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
 
 # Get all regressor estimators, filtering out not supported regressors
 REGRESSORS = [cls for name, cls in all_estimators(type_filter="regressor")

@@ -374,7 +374,7 @@ def run_test_label_binarizer(
 
 def test_multilabelbinarizer_minimal():
     from sklearn.preprocessing import MultiLabelBinarizer
-    from openmodels.serializers.sklearn_serializer import SklearnSerializer
+    from openmodels.serializers.sklearn.sklearn_serializer import SklearnSerializer
     from openmodels import SerializationManager
     import numpy as np
 

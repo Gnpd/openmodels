@@ -2,7 +2,7 @@ import pytest
 from sklearn.utils.discovery import all_estimators
 from sklearn.datasets import make_classification
 from openmodels.test_helpers import run_test_model
-from openmodels.serializers.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
 from test.test_classification import CLASSIFIERS
 from test.test_clustering import CLUSTERS
 from test.test_regression import REGRESSORS

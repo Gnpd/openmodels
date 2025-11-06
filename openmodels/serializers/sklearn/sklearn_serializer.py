@@ -9,6 +9,8 @@ from typing import Any, Callable, Dict, List, Tuple, Type, Optional, Union
 import numpy as np
 import inspect
 
+from ._custom_estimator import load_custom_estimators
+
 import sklearn
 from sklearn.calibration import _CalibratedClassifier, _SigmoidCalibration
 from sklearn.cluster._birch import _CFNode
@@ -72,7 +74,7 @@ KERNEL_REGISTRY = [
 ALL_ESTIMATORS = {
     name: cls for name, cls in all_estimators() if issubclass(cls, BaseEstimator)
 }
-# add _BinMapper to ALL_ESTIMATORS
+# add extra private estimators to ALL_ESTIMATORS
 ALL_ESTIMATORS["_BinMapper"] = _BinMapper
 ALL_ESTIMATORS["_SigmoidCalibration"] = _SigmoidCalibration
 ALL_ESTIMATORS["_BinaryGaussianProcessClassifierLaplace"] = (
@@ -80,7 +82,7 @@ ALL_ESTIMATORS["_BinaryGaussianProcessClassifierLaplace"] = (
 )
 ALL_ESTIMATORS["_ConstantPredictor"] = _ConstantPredictor
 
-TESTED_VERSIONS = ["1.6.1", "1.7.1"]
+TESTED_VERSIONS = ["1.6.1", "1.7.2"]
 
 NOT_SUPPORTED_ESTIMATORS: list[str] = [
     # Regressors: all regressors work!! Hurray!
@@ -230,13 +232,62 @@ class SklearnSerializer(
     The serializer supports a wide range of scikit-learn estimators and handles
     the conversion of numpy arrays and other non-JSON-serializable types.
 
-    Attributes
+    Parameters
     ----------
-    SUPPORTED_ESTIMATORS : Dict[str, Type[BaseEstimator]]
-        A dictionary of supported scikit-learn estimator classes.
-    SUPPORTED_TYPES : List[Type]
-        A list of supported types for serialization.
+    custom_estimators : callable, list, tuple, or dict, optional
+        Optional collection of third-party or custom estimator classes to support during
+        serialization and deserialization. This can be:
+
+        - A callable returning an iterable or dict of (name, class) pairs (e.g., a function like ``all_estimators``).
+        - A list or tuple of (name, class) pairs.
+        - A dict mapping estimator names to their classes.
+
+        These estimators are merged into the serializer's internal registry for this instance only,
+        allowing support for custom or external estimators without affecting the global registry.
+
+    See Also
+    --------
+    scikit-learn developer guide:
+        https://scikit-learn.org/stable/developers/develop.html
+
+    sklearn.utils.discovery.all_estimators:
+        https://scikit-learn.org/stable/modules/generated/sklearn.utils.discovery.all_estimators.html
+
+    skltemplate.utils.discovery.all_estimators (project template):
+        https://contrib.scikit-learn.org/project-template/generated/skltemplate.utils.discovery.all_estimators.html
+
+    Developer Notes
+    --------------
+    For third-party packages compatible with scikit-learn, it is recommended to implement
+    an ``all_estimators()`` utility following the scikit-learn API and template above.
+    This enables automatic discovery and integration of custom estimators for serialization.
+
+    If you are maintaining a scikit-learn compatible package, let us know!
+    We are happy to extend our testing to include your estimators, ensuring everything works
+    smoothly and that we cover any unique types or patterns used in your library.
+
+    To request official support for your package, please open an issue at:
+    https://github.com/SF-Tec/openmodels/issues
+
     """
+
+    def __init__(
+        self,
+        custom_estimators: Optional[
+            Union[
+                Callable[..., Any],
+                List[Any],
+                Tuple[Any, ...],
+                Dict[str, Type[BaseEstimator]],
+            ]
+        ] = None,
+    ):
+        extra = (
+            load_custom_estimators(custom_estimators, ALL_ESTIMATORS)
+            if custom_estimators
+            else {}
+        )
+        self._all_estimators: Dict[str, Type] = {**ALL_ESTIMATORS, **extra}
 
     # --- Helpers ---
     def _check_version(self, stored_version: Optional[str]) -> None:
@@ -274,10 +325,15 @@ class SklearnSerializer(
         """
         Get all scikit-learn supported estimators.
 
+        Parameters
+        ----------
+        type_filter : str, optional
+            If provided, filter estimators by type (e.g., 'classifier', 'regressor').
+
         Returns
         -------
-        Dict[str, BaseEstimator]
-            A dictionary of all scikit-learn supported estimators.
+        list of tuple
+            List of (name, class) pairs for supported estimators.
         """
 
         return [
@@ -410,7 +466,7 @@ class SklearnSerializer(
         ]
         # Estimators
         estimator_handlers = [
-            (est_name, self.deserialize) for est_name in ALL_ESTIMATORS.keys()
+            (est_name, self.deserialize) for est_name in self._all_estimators.keys()
         ]
 
         kernel_handlers = [
@@ -805,7 +861,7 @@ class SklearnSerializer(
         Raises
         ------
         SerializationError
-            If the model has not been fitted or if there's an error during serialization.
+            If there's an error during serialization.
 
         Examples
         --------
@@ -826,7 +882,7 @@ class SklearnSerializer(
             "params": self.convert_to_serializable(params),
             "param_types": param_types,
             "param_dtypes": param_dtypes,
-            "producer_version": getattr(model, "_sklearn_version", None),
+            "producer_version": sklearn.__version__,
             "producer_name": model.__module__.split(".")[0],
             "domain": "sklearn",
         }
@@ -897,7 +953,7 @@ class SklearnSerializer(
                 params[key] = tuple(value)
 
         # Get valid constructor arguments for the estimator
-        estimator_cls = ALL_ESTIMATORS[estimator_class]
+        estimator_cls = self._all_estimators[estimator_class]
         valid_args = list(inspect.signature(estimator_cls.__init__).parameters.keys())
         # Remove 'self' if present
         valid_args = [arg for arg in valid_args if arg != "self"]

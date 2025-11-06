@@ -4,7 +4,7 @@ from sklearn.utils.discovery import all_estimators
 from sklearn.datasets import make_blobs
 from sklearn.feature_extraction import FeatureHasher
 from openmodels.test_helpers import run_test_model
-from openmodels.serializers.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
 
 # Get all cluster estimators, filtering out not supported clusters
 CLUSTERS = [
