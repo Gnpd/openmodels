@@ -164,3 +164,9 @@ For a detailed changelog, please see the [CHANGELOG.md](https://github.com/SF-Te
 If you encounter any issues or have questions, please [file an issue](https://github.com/SF-Tec/openmodels/issues/new) on our GitHub repository.
 
 We're always looking to improve OpenModels. If you have any suggestions or feature requests, please let us know!
+
+## Acknowledgements
+
+During the revision and design of OpenModels, we came across the discontinued project [**sklearn-json**](https://github.com/mlrequest/sklearn-json).  
+Although no longer maintained, it provided valuable ideas — particularly around testing approaches — that inspired parts of our implementation.  
+We would like to acknowledge and thank its authors for their earlier contributions to open model serialization efforts in the scikit-learn ecosystem.
