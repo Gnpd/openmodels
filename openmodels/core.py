@@ -128,8 +128,9 @@ class SerializationManager:
         ----------
         model : Any
             The machine learning model to serialize and save.
-        file_path : Union[str, Path]
-            The path to the file where the model will be saved.
+        file_path : Union[str, Path, None]
+            The path to the file where the model will be saved. If None, the model will be saved to
+            a default filename of "model.{ext}", where "ext" is determined by the format (e.g., "json" or "pkl").
         format_name : str, optional
             The target format (default is "json").
 
@@ -160,17 +161,15 @@ class SerializationManager:
             file_path = f"model.{ext}"
         file_path = Path(file_path)
 
-        # Determine write mode based on type of serialized_data
-        if isinstance(serialized_data, bytes):
-            mode = "wb"
-            encoding = None
-        else:
-            mode = "w"
-            encoding = "utf-8"
-
         try:
-            with open(file_path, mode, encoding=encoding) as f:
-                f.write(serialized_data)
+            # Determine write mode based on type of serialized_data
+            if isinstance(serialized_data, bytes):
+                with open(file_path, "wb") as f:
+                    f.write(serialized_data)
+            else:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(serialized_data)
+
         except Exception as e:
             raise SerializationError(f"Failed to save model: {e}")
 
@@ -205,14 +204,13 @@ class SerializationManager:
         file_path = Path(file_path)
         # Determine read mode based on format
         try:
+            serialized_data: Union[str, bytes]
             if format_name == "pickle":
-                mode = "rb"
-                encoding = None
+                with open(file_path, "rb") as f:
+                    serialized_data = f.read()
             else:
-                mode = "r"
-                encoding = "utf-8"
-            with open(file_path, mode, encoding=encoding) as f:
-                serialized_data = f.read()
+                with open(file_path, "r", encoding="utf-8") as f:
+                    serialized_data = f.read()
         except Exception as e:
             raise DeserializationError(f"Failed to load model: {e}")
 
