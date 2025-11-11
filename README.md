@@ -53,7 +53,7 @@ OpenModels provides high-level `save` and `load` methods for convenient file I/O
 # Serialize and save a model to a file in JSON format
 manager.save(model, "model.json", format_name="json")
 
-# Load a model from a file
+# Load and deserialize a model from a file
 loaded_model = manager.load("model.json", format_name="json")
 ```
 
