@@ -151,11 +151,10 @@ class SerializationManager:
 
         # Determine file extension
         ext = format_name
-        if format_name == "json":
-            ext = "json"
-        elif format_name == "pickle":
+        if format_name == "pickle":
             ext = "pkl"
-        # Add more formats here as needed
+        else:
+            ext = format_name
 
         if file_path is None:
             file_path = f"model.{ext}"
