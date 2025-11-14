@@ -131,6 +131,44 @@ print([name for name, cls in regressors])
 
 This will print the names of all scikit-learn estimators supported by OpenModels, filtered to exclude those that are not currently supported.
 
+## Using Custom Estimators and Pipelines (Third-Party Support)
+
+OpenModels can serialize and deserialize models and pipelines that include third-party estimators, such as those from [chemotools](https://github.com/paucablop/chemotools).
+
+```python
+from openmodels import SerializationManager, SklearnSerializer
+from chemotools.utils.discovery import all_estimators  # chemotools >=0.2.2
+from chemotools.derivative import SavitzkyGolay
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.pipeline import make_pipeline
+
+# Example data
+from chemotools.datasets import load_fermentation_train
+X_train, y_train = load_fermentation_train()
+
+# Define a pipeline with chemotools preprocessing and sklearn estimator
+pipeline = make_pipeline(
+    SavitzkyGolay(window_size=3, polynomial_order=1, derivate_order=1),
+    PLSRegression(n_components=2)
+)
+
+# Fit the pipeline
+pipeline.fit(X_train, y_train)
+
+# Serialize and deserialize the pipeline using OpenModels
+serializer = SklearnSerializer(custom_estimators=all_estimators)
+manager = SerializationManager(serializer)
+
+serialized = manager.serialize(pipeline)
+restored = manager.deserialize(serialized)
+
+# Use the restored pipeline
+y_train_pred = restored.predict(X_train)
+print(y_train_pred)
+```
+
+You can pass any compatible `all_estimators` function, list, or dictionary to `SklearnSerializer(custom_estimators=...)` to extend support for custom or third-party estimators.
+
 ## Contributing
 
 We welcome contributions to OpenModels! Whether you want to add support for new models, implement new serialization formats, or improve the existing codebase, your help is appreciated.
