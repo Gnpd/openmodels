@@ -46,6 +46,17 @@ transformed_data = deserialized_model.transform(X[:5])
 print(transformed_data)
 ```
 
+## Saving and Loading Models
+OpenModels provides high-level `save` and `load` methods for convenient file I/O:
+
+```python
+# Serialize and save a model to a file in JSON format
+manager.save(model, "model.json", format_name="json")
+
+# Load and deserialize a model from a file
+loaded_model = manager.load("model.json", format_name="json")
+```
+
 ## Extensibility
 
 OpenModels is designed to be easily extended with new serialization formats and model types.
