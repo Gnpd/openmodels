@@ -438,7 +438,11 @@ class SklearnSerializer(
         attribute_keys += ATTRIBUTE_EXCEPTIONS.get(estimator.__class__.__name__, [])
 
         # Prevents attribute exceptions introduced in newer scikit-learn versions from breaking older versions of the serializer
-        attributes = {key: getattr(estimator, key) for key in attribute_keys if hasattr(estimator, key)}
+        attributes = {
+            key: getattr(estimator, key)
+            for key in attribute_keys
+            if hasattr(estimator, key)
+        }
 
         return attributes
 
