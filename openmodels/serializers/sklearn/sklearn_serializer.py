@@ -82,7 +82,7 @@ ALL_ESTIMATORS["_BinaryGaussianProcessClassifierLaplace"] = (
 )
 ALL_ESTIMATORS["_ConstantPredictor"] = _ConstantPredictor
 
-TESTED_VERSIONS = ["1.6.1", "1.7.2"]
+TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0"]
 
 NOT_SUPPORTED_ESTIMATORS: list[str] = [
     # Regressors: all regressors work!! Hurray!
@@ -190,7 +190,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "KNeighborsTransformer": ["_fit_method", "_tree", "_fit_X"],
     "PowerTransformer": ["_scaler"],
     "RadiusNeighborsTransformer": ["_fit_method", "_tree"],
-    "SimpleImputer": ["_fit_dtype"],
+    "SimpleImputer": ["_fit_dtype", "_fill_dtype"],
     "MiniBatchNMF": ["_n_components", "_transform_max_iter", "_beta_loss", "_gamma"],
     "MissingIndicator": ["_n_features", "_precomputed"],
     "MultiLabelBinarizer": ["_cached_dict"],
@@ -267,7 +267,7 @@ class SklearnSerializer(
     smoothly and that we cover any unique types or patterns used in your library.
 
     To request official support for your package, please open an issue at:
-    https://github.com/SF-Tec/openmodels/issues
+    https://github.com/Gnpd/openmodels/issues
 
     """
 
@@ -437,7 +437,12 @@ class SklearnSerializer(
         attribute_keys = [key for key in dir(estimator) if is_valid_attribute(key)]
         attribute_keys += ATTRIBUTE_EXCEPTIONS.get(estimator.__class__.__name__, [])
 
-        attributes = {key: getattr(estimator, key) for key in attribute_keys}
+        # Prevents attribute exceptions introduced in newer scikit-learn versions from breaking older versions of the serializer
+        attributes = {
+            key: getattr(estimator, key)
+            for key in attribute_keys
+            if hasattr(estimator, key)
+        }
 
         return attributes
 

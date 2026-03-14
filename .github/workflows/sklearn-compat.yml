@@ -1,0 +1,48 @@
+name: scikit-learn compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'openmodels/**'
+      - 'test/**'
+      - '.github/workflows/sklearn-compat.yml'
+  schedule:
+    - cron: '0 6 * * 1'   # weekly, Monday 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sklearn-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sklearn-version: '1.6.1'
+          - sklearn-version: '1.7.2'
+          - sklearn-version: '1.8.0'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+          poetry install
+
+      - name: Override scikit-learn version
+        run: poetry run pip install "scikit-learn==${{ matrix.sklearn-version }}" --force-reinstall
+
+      - name: Print environment
+        run: |
+          python --version
+          poetry run python -c "import sklearn; print('sklearn:', sklearn.__version__)"
+
+      - name: Run tests
+        run: poetry run pytest

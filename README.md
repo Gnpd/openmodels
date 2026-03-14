@@ -3,7 +3,7 @@
 [![PyPI version](https://badge.fury.io/py/openmodels.svg?cacheBust=1)](https://badge.fury.io/py/openmodels)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Versions](https://img.shields.io/pypi/pyversions/openmodels.svg?cacheBust=1)](https://pypi.org/project/openmodels/)
-[![TestPyPI](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/SF-Tec/openmodels/refs/heads/main/testpypi-badge.json)](https://test.pypi.org/project/openmodels/)
+[![TestPyPI](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Gnpd/openmodels/refs/heads/main/testpypi-badge.json)](https://test.pypi.org/project/openmodels/)
 
 OpenModels is a flexible and extensible library for serializing and deserializing machine learning models. It's designed to support any serialization format through a plugin-based architecture, providing a safe and transparent solution for exporting and sharing predictive models.
 
@@ -169,11 +169,23 @@ print(y_train_pred)
 
 You can pass any compatible `all_estimators` function, list, or dictionary to `SklearnSerializer(custom_estimators=...)` to extend support for custom or third-party estimators.
 
+## scikit-learn Version Compatibility
+
+OpenModels is automatically tested against the following scikit-learn versions on every push to `main` and weekly via CI:
+
+| scikit-learn | Status |
+|---|---|
+| 1.6.1 | ✅ Tested |
+| 1.7.2 | ✅ Tested |
+| 1.8.0 | ✅ Tested |
+
+If you encounter any incompatibility or a use case where the library does not work correctly with your version of scikit-learn, please [open an issue](https://github.com/Gnpd/openmodels/issues/new) — we would greatly appreciate your feedback!
+
 ## Contributing
 
 We welcome contributions to OpenModels! Whether you want to add support for new models, implement new serialization formats, or improve the existing codebase, your help is appreciated.
 
-Please refer to our [Contributing Guidelines](https://github.com/SF-Tec/openmodels/blob/main/CONTRIBUTING.md) for more information on how to get started.
+Please refer to our [Contributing Guidelines](https://github.com/Gnpd/openmodels/blob/main/CONTRIBUTING.md) for more information on how to get started.
 
 ## Running Tests
 
@@ -202,15 +214,15 @@ To run the tests:
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/SF-Tec/openmodels/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/Gnpd/openmodels/blob/main/LICENSE) file for details.
 
 ## Changelog
 
-For a detailed changelog, please see the [CHANGELOG.md](https://github.com/SF-Tec/openmodels/blob/main/CHANGELOG.md) file.
+For a detailed changelog, please see the [CHANGELOG.md](https://github.com/Gnpd/openmodels/blob/main/CHANGELOG.md) file.
 
 ## Support
 
-If you encounter any issues or have questions, please [file an issue](https://github.com/SF-Tec/openmodels/issues/new) on our GitHub repository.
+If you encounter any issues or have questions, please [file an issue](https://github.com/Gnpd/openmodels/issues/new) on our GitHub repository.
 
 We're always looking to improve OpenModels. If you have any suggestions or feature requests, please let us know!
 
