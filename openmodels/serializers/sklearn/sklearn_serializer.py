@@ -82,7 +82,7 @@ ALL_ESTIMATORS["_BinaryGaussianProcessClassifierLaplace"] = (
 )
 ALL_ESTIMATORS["_ConstantPredictor"] = _ConstantPredictor
 
-TESTED_VERSIONS = ["1.6.1", "1.7.2"]
+TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0"]
 
 NOT_SUPPORTED_ESTIMATORS: list[str] = [
     # Regressors: all regressors work!! Hurray!
@@ -190,7 +190,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "KNeighborsTransformer": ["_fit_method", "_tree", "_fit_X"],
     "PowerTransformer": ["_scaler"],
     "RadiusNeighborsTransformer": ["_fit_method", "_tree"],
-    "SimpleImputer": ["_fit_dtype"],
+    "SimpleImputer": ["_fit_dtype", "_fill_dtype"],
     "MiniBatchNMF": ["_n_components", "_transform_max_iter", "_beta_loss", "_gamma"],
     "MissingIndicator": ["_n_features", "_precomputed"],
     "MultiLabelBinarizer": ["_cached_dict"],
