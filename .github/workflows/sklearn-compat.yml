@@ -22,8 +22,6 @@ jobs:
           - sklearn-version: '1.7.2'
           - sklearn-version: '1.8.0'
 
-    continue-on-error: ${{ matrix.experimental == true }}
-
     steps:
       - uses: actions/checkout@v4
 

@@ -267,7 +267,7 @@ class SklearnSerializer(
     smoothly and that we cover any unique types or patterns used in your library.
 
     To request official support for your package, please open an issue at:
-    https://github.com/SF-Tec/openmodels/issues
+    https://github.com/Gnpd/openmodels/issues
 
     """
 

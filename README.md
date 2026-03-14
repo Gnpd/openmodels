@@ -185,7 +185,7 @@ If you encounter any incompatibility or a use case where the library does not wo
 
 We welcome contributions to OpenModels! Whether you want to add support for new models, implement new serialization formats, or improve the existing codebase, your help is appreciated.
 
-Please refer to our [Contributing Guidelines](https://github.com/SF-Tec/openmodels/blob/main/CONTRIBUTING.md) for more information on how to get started.
+Please refer to our [Contributing Guidelines](https://github.com/Gnpd/openmodels/blob/main/CONTRIBUTING.md) for more information on how to get started.
 
 ## Running Tests
 
@@ -214,15 +214,15 @@ To run the tests:
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/SF-Tec/openmodels/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/Gnpd/openmodels/blob/main/LICENSE) file for details.
 
 ## Changelog
 
-For a detailed changelog, please see the [CHANGELOG.md](https://github.com/SF-Tec/openmodels/blob/main/CHANGELOG.md) file.
+For a detailed changelog, please see the [CHANGELOG.md](https://github.com/Gnpd/openmodels/blob/main/CHANGELOG.md) file.
 
 ## Support
 
-If you encounter any issues or have questions, please [file an issue](https://github.com/SF-Tec/openmodels/issues/new) on our GitHub repository.
+If you encounter any issues or have questions, please [file an issue](https://github.com/Gnpd/openmodels/issues/new) on our GitHub repository.
 
 We're always looking to improve OpenModels. If you have any suggestions or feature requests, please let us know!
 

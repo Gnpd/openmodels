@@ -3,7 +3,7 @@ name = "openmodels"
 version = "0.1.0-alpha.21"
 description = "Export scikit-learn model files to JSON for sharing or deploying predictive models with peace of mind."
 authors = [
-    "Alejandro Gutierrez <agutierrez@sftec.es>, Pau Cabaneros <pau.cabaneros@gmail.com>, Raúl Marín <hi@raulmarin.dev>, Ruben Parrilla <rparrilla@sftec.es>",
+    "Alejandro Gutierrez <a.gutierrez@g-npd.com>, Pau Cabaneros <pau.cabaneros@gmail.com>, Raúl Marín <hi@raulmarin.dev>",
 ]
 license = "MIT"
 readme = "README.md"
