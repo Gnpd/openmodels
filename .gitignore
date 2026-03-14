@@ -55,5 +55,5 @@ poetry.lock
 test/temp/*.json
 .coverage
 .coverage.*
-CALUDE.md
+CLAUDE.md
 .tox/
