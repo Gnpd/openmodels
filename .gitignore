@@ -57,3 +57,6 @@ test/temp/*.json
 .coverage.*
 CLAUDE.md
 .tox/
+# Sphinx documentation build output #
+##################################
+docs/_build/
