@@ -245,19 +245,19 @@ class SklearnSerializer(
         These estimators are merged into the serializer's internal registry for this instance only,
         allowing support for custom or external estimators without affecting the global registry.
 
-    See Also
-    --------
-    scikit-learn developer guide:
-        https://scikit-learn.org/stable/developers/develop.html
+    References
+    ----------
+    .. [1] scikit-learn developer guide:
+       https://scikit-learn.org/stable/developers/develop.html
 
-    sklearn.utils.discovery.all_estimators:
-        https://scikit-learn.org/stable/modules/generated/sklearn.utils.discovery.all_estimators.html
+    .. [2] ``sklearn.utils.discovery.all_estimators``:
+       https://scikit-learn.org/stable/modules/generated/sklearn.utils.discovery.all_estimators.html
 
-    skltemplate.utils.discovery.all_estimators (project template):
-        https://contrib.scikit-learn.org/project-template/generated/skltemplate.utils.discovery.all_estimators.html
+    .. [3] ``skltemplate.utils.discovery.all_estimators`` (project template):
+       https://contrib.scikit-learn.org/project-template/generated/skltemplate.utils.discovery.all_estimators.html
 
-    Developer Notes
-    --------------
+    Notes
+    -----
     For third-party packages compatible with scikit-learn, it is recommended to implement
     an ``all_estimators()`` utility following the scikit-learn API and template above.
     This enables automatic discovery and integration of custom estimators for serialization.
