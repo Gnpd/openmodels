@@ -1,7 +1,7 @@
 # Configuration file for the Sphinx documentation builder.
 
 project = "OpenModels"
-copyright = "2026, All rights reserved."
+copyright = "2026, Alejandro Gutierrez and Raúl Marín"
 author = "Alejandro Gutierrez, Raúl Marín"
 release = "0.1.0-alpha.21"
 html_title = "OpenModels"
