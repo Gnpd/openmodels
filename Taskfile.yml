@@ -50,3 +50,13 @@ tasks:
     desc: Build the project
     cmds:
       - "poetry build"
+
+  docs:html-all:
+    desc: Build the Sphinx documentation (clean + full rebuild)
+    cmds:
+      - "poetry run sphinx-build -b html docs docs/_build/html"
+
+  docs:serve:
+    desc: Serve the documentation locally on port 8000
+    cmds:
+      - "poetry run python -m http.server 8000 --directory docs/_build/html"
