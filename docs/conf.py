@@ -29,7 +29,7 @@ templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # Mock imports that may not be available when building docs
-autodoc_mock_imports = ["sklearn", "numpy", "np", "scipy"]
+autodoc_mock_imports = ["sklearn", "numpy", "scipy"]
 
 # Disable translation/gettext support
 gettext_auto_build = False
