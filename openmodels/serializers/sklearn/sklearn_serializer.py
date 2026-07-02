@@ -108,6 +108,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_probA",
         "_probB",
         "_gamma",
+        "_effective_probability",
     ],
     "KNeighborsRegressor": ["_fit_method", "_fit_X", "_y"],
     "NuSVR": [
@@ -118,6 +119,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_probB",
         "_dual_coef_",
         "_intercept_",
+        "_effective_probability",
     ],
     "TweedieRegressor": ["_base_loss"],
     "GaussianProcessRegressor": ["kernel_", "_y_train_std", "_y_train_mean"],
@@ -160,6 +162,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_gamma",
         "_dual_coef_",
         "_intercept_",
+        "_effective_probability",
     ],
     "KNeighborsClassifier": ["_fit_method", "_fit_X", "_y", "_tree"],
     "RadiusNeighborsClassifier": ["_fit_method", "_fit_X", "_y", "_tree"],
@@ -174,6 +177,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_probA",
         "_probB",
         "_gamma",
+        "_effective_probability",
     ],
     "TunedThresholdClassifierCV": ["_curve_scorer"],
     # Transformers:

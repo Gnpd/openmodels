@@ -53,7 +53,7 @@ def test_classifier(Classifier, data):
     if Classifier.__name__ in ["CategoricalNB", "ComplementNB", "MultinomialNB"]:
         abs = True
     elif Classifier.__name__ == "ClassifierChain":
-        args["base_estimator"] = base_lr
+        args["estimator"] = base_lr
         y_multi = np.column_stack([(y == i).astype(int) for i in np.unique(y)])
         y = y_multi
     elif Classifier.__name__ in ["FixedThresholdClassifier", "TunedThresholdClassifierCV"]:

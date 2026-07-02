@@ -73,7 +73,7 @@ def test_regressor(Regressor, data):
         x_sparse = None
         y_sparse = None
         base_estimator = LinearRegression()
-        args = {"base_estimator": base_estimator}
+        args = {"estimator": base_estimator}
 
     elif Regressor.__name__ == "StackingRegressor":
         # Create simpler base estimators that are easier to serialize
