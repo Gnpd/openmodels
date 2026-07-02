@@ -1,27 +1,56 @@
 name: OpenModels CI
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo 'matrix=["3.10","3.11","3.12","3.13"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'matrix=["3.11"]' >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: setup
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pypoetry/virtualenvs
+            ~/.cache/pip
+          key: ${{ runner.os }}-poetry-${{ matrix.python-version }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-${{ matrix.python-version }}-
 
       - name: Install dependencies
         run: |
@@ -42,15 +71,11 @@ jobs:
       - name: Run type checking
         run: poetry run mypy openmodels
 
-      - name: Run formatting
-        run: |
-          poetry run black openmodels
-          git diff --exit-code
+      - name: Check formatting
+        run: poetry run black --check openmodels
 
       - name: Run linting
-        run: |
-          poetry run black --check openmodels
-          poetry run flake8 openmodels
+        run: poetry run flake8 openmodels
 
       - name: Check for leftover debug print statements
         run: |
@@ -63,11 +88,21 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+
+      - name: Cache Poetry dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pypoetry/virtualenvs
+            ~/.cache/pip
+          key: ${{ runner.os }}-poetry-3.11-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-3.11-
 
       - name: Install dependencies
         run: |
@@ -87,13 +122,13 @@ jobs:
   publish-test:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -108,7 +143,20 @@ jobs:
           name: python-package-distributions
           path: dist/
 
+      - name: Check if version already published to TestPyPI
+        id: check-version
+        run: |
+          current_version=$(poetry version -s)
+          status=$(curl -s -o /dev/null -w "%{http_code}" "https://test.pypi.org/pypi/openmodels/${current_version}/json")
+          if [ "$status" == "200" ]; then
+            echo "Version $current_version already exists on TestPyPI, skipping publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish package to TestPyPI
+        if: steps.check-version.outputs.skip == 'false'
         env:
           TEST_PYPI_API_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
         run: |
