@@ -4,7 +4,11 @@ on:
     push:
         branches:
             - main
-            - 39-explore-automatic-documentation-generation
+        paths:
+            - 'docs/**'
+            - 'openmodels/**'
+            - 'pyproject.toml'
+            - '.github/workflows/docs.yml'
     workflow_dispatch:
 
 permissions:
@@ -26,6 +30,16 @@ jobs:
               uses: actions/setup-python@v6
               with:
                   python-version: "3.12"
+
+            - name: Cache Poetry dependencies
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cache/pypoetry/virtualenvs
+                      ~/.cache/pip
+                  key: ${{ runner.os }}-docs-${{ hashFiles('poetry.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-docs-
 
             - name: Install dependencies
               run: |
