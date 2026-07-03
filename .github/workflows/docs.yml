@@ -1,14 +1,6 @@
 name: Deploy Docs
 
 on:
-    push:
-        branches:
-            - main
-        paths:
-            - 'docs/**'
-            - 'openmodels/**'
-            - 'pyproject.toml'
-            - '.github/workflows/docs.yml'
     workflow_dispatch:
 
 permissions:
