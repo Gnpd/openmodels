@@ -47,7 +47,7 @@ T = TypeVar("T", bound=Union[BaseEstimator, ModelType])
 
 
 def ensure_correct_sparse_format(
-    x: Union[np.ndarray, csr_matrix]
+    x: Union[np.ndarray, csr_matrix],
 ) -> Union[np.ndarray, csr_matrix]:
     """
     Ensure the input data is in the correct format for SVM models.

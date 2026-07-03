@@ -19,7 +19,7 @@ def is_valid_estimator(name: str, cls: Any) -> bool:
 
 
 def normalize_estimators(
-    estimators: Union[Callable[..., Any], List[Any], Tuple[Any, ...], Dict[str, Any]]
+    estimators: Union[Callable[..., Any], List[Any], Tuple[Any, ...], Dict[str, Any]],
 ) -> List[Any]:
     """Normalize input into a flat list of estimators or (name, class) items."""
     if not isinstance(estimators, (list, tuple, set)):

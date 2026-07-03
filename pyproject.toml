@@ -17,7 +17,7 @@ poetry-types = "^0.6.2"
 mypy = "^1.10.0"
 pytest = "^8.2.2"
 pre-commit = "^3.7.1"
-black = "^24.4.2"
+black = "^26.3.1"
 flake8 = "^7.1.1"
 pytest-cov = "^7.0.0"
 
