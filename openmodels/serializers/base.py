@@ -8,7 +8,7 @@ support for new serialization targets.
 """
 
 import numpy as np
-from scipy.sparse import csr_matrix  # type: ignore
+from scipy.sparse import csr_matrix, csc_matrix, csr_array, csc_array  # type: ignore
 from scipy.interpolate import interp1d, BSpline  # type: ignore
 from scipy.stats._distn_infrastructure import rv_continuous_frozen  # type: ignore
 import scipy.stats  # type: ignore
@@ -308,7 +308,14 @@ class ScipySerializerMixin(SerializerMixin):
     def _get_serializer_handlers(self):
         return [
             (BSpline, self._serialize_bspline),
-            (csr_matrix, self._serialize_csr_matrix),
+            # csr_matrix is the only sparse container openmodels round-trips on the wire, but
+            # any scipy sparse container (the older *_matrix family or the newer array-API
+            # *_array family) is accepted here - _serialize_csr_matrix normalizes it to csr via
+            # the csr_matrix(value) constructor, which accepts any sparse-like input.
+            (
+                (csr_matrix, csc_matrix, csr_array, csc_array),
+                self._serialize_csr_matrix,
+            ),
             (interp1d, self._serialize_interp1d),
             (rv_continuous_frozen, self._serialize_scipy_dist),
         ] + super()._get_serializer_handlers()
