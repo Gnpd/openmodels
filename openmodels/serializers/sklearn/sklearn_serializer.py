@@ -8,6 +8,7 @@ converted to and from dictionary representations.
 from typing import Any, Callable, Dict, List, Tuple, Type, Optional, Union
 import numpy as np
 import inspect
+from scipy.sparse import issparse
 
 from ._custom_estimator import load_custom_estimators
 
@@ -404,6 +405,13 @@ class SklearnSerializer(
             # instances of numpy-internal per-dtype subclasses (Float64DType, Int64DType,
             # BoolDType, ...), so type(item).__name__ is not a stable/registrable tag.
             return "dtype"
+        elif issparse(item):
+            # Normalize every scipy sparse container (csr_matrix, csc_matrix, csr_array,
+            # csc_array, ...) to the one tag ScipySerializerMixin actually registers a
+            # deserializer for - _serialize_csr_matrix already converts any of them to csr_matrix
+            # via the csr_matrix(value) constructor, so type(item).__name__ (e.g. "csr_array")
+            # would tag a value the deserializer dispatch table has no matching entry for.
+            return "csr_matrix"
         else:
             # Return the type name if it's not a list or it's an empty list
             return type(item).__name__
