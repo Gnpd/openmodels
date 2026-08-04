@@ -3,8 +3,19 @@ This file contains functions for testing the serialization and deserialization o
 models using the `openmodels` library.
 """
 
+import functools
 import os
-from typing import Optional, Union, Protocol, runtime_checkable, TypeVar, cast
+from contextlib import contextmanager
+from typing import (
+    Iterator,
+    Optional,
+    Type,
+    Union,
+    Protocol,
+    runtime_checkable,
+    TypeVar,
+    cast,
+)
 import numpy as np
 from numpy import testing
 from sklearn.base import BaseEstimator
@@ -44,6 +55,91 @@ class FittableModel(Protocol):
 
 ModelType = Union[PredictorModel, TransformerModel, FittableModel]
 T = TypeVar("T", bound=Union[BaseEstimator, ModelType])
+
+_ROUNDTRIPPABLE_METHODS = ("fit", "fit_transform", "fit_predict")
+
+
+@contextmanager
+def roundtrip_fit(
+    *classes: Type[BaseEstimator], format_name: str = "json"
+) -> Iterator[None]:
+    """
+    Monkeypatch fit()/fit_transform()/fit_predict() on the given estimator classes so that,
+    immediately after fitting, the estimator's *fitted* attributes are replaced with the result
+    of an openmodels serialize -> deserialize round-trip. Restores the original methods on exit.
+
+    Only methods defined directly on the class are patched (not inherited ones), since e.g.
+    TransformerMixin.fit_transform already calls self.fit(...) and would be covered by patching
+    fit alone; only classes that override fit_transform/fit_predict directly need those patched.
+
+    Only attributes openmodels actually serializes as fitted state (per
+    SklearnSerializer._extract_estimator_attributes - sklearn's trailing-underscore convention,
+    plus the small set of private attributes some estimators need at predict time) are copied
+    back onto the original instance. Constructor-set parameters are deliberately left untouched:
+    JSON has no tuple type, so e.g. a tuple-valued param would come back as a list after a
+    round-trip even though openmodels never claims to preserve exact param typing - copying it
+    over would make the *test infrastructure* look like a fidelity bug in checks like
+    check_dont_overwrite_parameters.
+
+    This lets sklearn's own estimator-specific test suites be reused unmodified against
+    round-tripped models: any assertion they make about a fitted estimator becomes, implicitly,
+    an openmodels fidelity check.
+    """
+    manager = SerializationManager(SklearnSerializer())
+    originals: dict = {}
+
+    def _roundtrip(instance) -> None:
+        fitted_keys = manager.model_serializer._extract_estimator_attributes(
+            instance
+        ).keys()
+        serialized = manager.serialize(instance, format_name=format_name)
+        deserialized = manager.deserialize(serialized, format_name=format_name)
+        for key in fitted_keys:
+            if hasattr(deserialized, key):
+                setattr(instance, key, getattr(deserialized, key))
+
+    class _RoundtripDescriptor:
+        """
+        Wraps `orig` (a plain function, or a descriptor like sklearn's @available_if or a
+        property) so attribute access still goes through __get__ first. This matters because
+        many sklearn meta-estimators (Pipeline, FeatureAgglomeration, ...) use
+        hasattr(estimator, "fit_transform")-style availability checks that rely on the
+        descriptor's __get__ raising AttributeError when the method isn't actually available
+        (e.g. a Pipeline whose last step has no transform()). Replacing the class attribute
+        with a plain function would make it unconditionally "available", breaking that check
+        for everyone who does hasattr() introspection - not just this test suite.
+        """
+
+        def __init__(self, orig):
+            self._orig = orig
+
+        def __get__(self, obj, objtype=None):
+            if obj is None:
+                return self
+            # Raises AttributeError here (not inside the call below) if unavailable, exactly
+            # like normal attribute access on the original descriptor would.
+            bound_orig = self._orig.__get__(obj, objtype)
+
+            @functools.wraps(bound_orig)
+            def wrapper(*args, **kwargs):
+                result = bound_orig(*args, **kwargs)
+                _roundtrip(obj)
+                return result
+
+            return wrapper
+
+    for cls in classes:
+        for method_name in _ROUNDTRIPPABLE_METHODS:
+            if method_name in vars(cls):
+                orig = vars(cls)[method_name]
+                originals[(cls, method_name)] = orig
+                setattr(cls, method_name, _RoundtripDescriptor(orig))
+
+    try:
+        yield
+    finally:
+        for (cls, method_name), orig in originals.items():
+            setattr(cls, method_name, orig)
 
 
 def ensure_correct_sparse_format(

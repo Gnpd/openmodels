@@ -14,6 +14,7 @@ from openmodels.test_helpers import (
 from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
 from test.test_regression import REGRESSORS
 from test.test_classification import CLASSIFIERS
+from test._estimator_construction import CONSTRUCTOR_ARGS
 
 # Get all transformer estimators, filtering out not supported ones and those that are also regressors/classifiers
 TRANSFORMERS = [
@@ -108,8 +109,7 @@ def test_transformer(Transformer, data):
             ("scaler2", MinMaxScaler())
         ]
     if Transformer.__name__ in ["SelectFromModel", "SequentialFeatureSelector", "RFE", "RFECV"]:
-        from sklearn.linear_model import LogisticRegression
-        args["estimator"] = LogisticRegression()
+        args.update(CONSTRUCTOR_ARGS[Transformer.__name__])
     if Transformer.__name__ == "SparseCoder":
         # SparseCoder requires a dictionary (components) for initialization
         # Let's create a random dictionary with shape (n_components, n_features)

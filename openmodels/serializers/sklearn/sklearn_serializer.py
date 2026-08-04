@@ -99,7 +99,7 @@ NOT_SUPPORTED_ESTIMATORS: list[str] = [
 # Dictionary of attribute exceptions
 ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     # Regressors:
-    "PLSRegression": ["_x_mean", "_predict_1d"],
+    "PLSRegression": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "SVR": [
         "_sparse",
         "_n_support",
@@ -132,10 +132,10 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_bin_mapper",
     ],
     "RadiusNeighborsRegressor": ["_fit_method", "_fit_X", "_y"],
-    "CCA": ["_x_mean", "_predict_1d"],
+    "CCA": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "GammaRegressor": ["_base_loss"],
     "PoissonRegressor": ["_base_loss"],
-    "PLSCanonical": ["_x_mean", "_predict_1d"],
+    "PLSCanonical": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "IsotonicRegression": ["f_"],
     "TransformedTargetRegressor": ["_training_dim"],
     # Clusters:
@@ -199,7 +199,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "MissingIndicator": ["_n_features", "_precomputed"],
     "MultiLabelBinarizer": ["_cached_dict"],
     "PolynomialFeatures": ["_max_degree", "_n_out_full", "_min_degree"],
-    "PLSSVD": ["_x_mean", "_x_std"],
+    "PLSSVD": ["_x_mean", "_x_std", "_y_mean", "_y_std"],
     "TargetEncoder": ["_infrequent_enabled"],
     # Others:
     "IsolationForest": [
