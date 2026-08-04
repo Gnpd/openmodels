@@ -32,7 +32,17 @@ class SerializerMixin:
 
         # Recursive case: dict, list, tuple
         if isinstance(value, dict):
-            return {str(k): self.convert_to_serializable(v) for k, v in value.items()}
+            if all(isinstance(k, str) for k in value):
+                return {k: self.convert_to_serializable(v) for k, v in value.items()}
+            # Non-string keys (e.g. int) can't be represented as JSON object keys without
+            # losing their type, so fall back to a self-describing keys/values envelope that
+            # _deserialize_dict can reconstruct exactly.
+            return {
+                "__openmodels_dict__": True,
+                "keys": [self.convert_to_serializable(k) for k in value.keys()],
+                "key_types": [type(k).__name__ for k in value.keys()],
+                "values": [self.convert_to_serializable(v) for v in value.values()],
+            }
 
         if isinstance(value, (list, tuple)):
             return [self.convert_to_serializable(v) for v in value]
@@ -98,6 +108,21 @@ class SerializerMixin:
         module = __import__(data["module"], fromlist=[data["name"]])
         return getattr(module, data["name"])
 
+    def _deserialize_dict(self, value: Any) -> Any:
+        """Deserialize a dict, restoring non-string key types for the envelope produced by
+        convert_to_serializable's dict branch. Plain string-keyed dicts (the common case,
+        including dicts produced by older openmodels versions) pass through unchanged.
+        """
+        if isinstance(value, dict) and value.get("__openmodels_dict__"):
+            allowed_key_types = {"int": int, "float": float, "bool": bool, "str": str}
+            return {
+                allowed_key_types.get(kt, lambda x: x)(
+                    k
+                ): self.convert_from_serializable(v)
+                for k, kt, v in zip(value["keys"], value["key_types"], value["values"])
+            }
+        return value
+
     # --- Handlers ---
     def _get_serializer_handlers(self):
         """Each mixin extends this list."""
@@ -116,6 +141,7 @@ class SerializerMixin:
             ("str", str),
             ("type", self._deserialize_type),
             ("tuple", tuple),
+            ("dict", self._deserialize_dict),
             ("function", self._deserialize_function),
         ]
 
