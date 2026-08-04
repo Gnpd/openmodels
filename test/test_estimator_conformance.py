@@ -61,28 +61,6 @@ KNOWN_ROUNDTRIP_XFAILS: dict = {
         "predicted class (1/200 samples). Not a correctness bug - a boundary-case artifact of "
         "float round-tripping through JSON."
     ),
-    ("Birch", "check_fit_score_takes_y"): (
-        "openmodels serializes Birch's fitted state attribute-by-attribute, but root_/"
-        "dummy_leaf_ are a custom linked tree of _CFNode/_CFSubcluster objects, not plain "
-        "arrays; round-tripping loses the tree structure and predict() then fails with "
-        "'need at least one array to concatenate'. Real gap - Birch isn't properly supported "
-        "by the current sparse-tree-unaware serialization, tracked for a follow-up fix."
-    ),
-    ("SimpleImputer", "check_estimators_dtypes"): (
-        "Real gap: SimpleImputer's private _fit_dtype attribute (a numpy dtype object, listed "
-        "in ATTRIBUTE_EXCEPTIONS so openmodels does serialize it) round-trips through JSON as "
-        "its string repr but is never reconstructed back into an np.dtype on deserialize, so "
-        "transform() later fails with 'str' object has no attribute 'kind'. Passes at baseline "
-        "with roundtrip_fit disabled - tracked for a follow-up fix to the dtype (de)serializer."
-    ),
-    ("OrdinalEncoder", "check_estimators_pickle"): (
-        "Real gap: OrdinalEncoder's private _missing_indices attribute is a dict[int, int] "
-        "(listed in ATTRIBUTE_EXCEPTIONS). JSON object keys must be strings, so after a "
-        "round-trip the keys deserialize as str instead of int, and transform() later fails "
-        "indexing X_int[:, cat_idx] with a string. Passes at baseline with roundtrip_fit "
-        "disabled - tracked for a follow-up fix (int-keyed dicts need explicit key coercion "
-        "on deserialize, the same class of issue as the tuple-vs-list JSON limitation)."
-    ),
     ("DictionaryLearning", "check_transformer_general"): (
         "Pre-existing sklearn/check fragility, unrelated to serialization: fails identically "
         "against a bare, unpatched DictionaryLearning() with check_estimator's default "
@@ -123,13 +101,6 @@ KNOWN_ROUNDTRIP_XFAILS: dict = {
     ("BernoulliRBM", "check_methods_subset_invariance"): (
         "Same pre-existing, serialization-unrelated fragility as this estimator's "
         "check_methods_sample_order_invariance failure."
-    ),
-    ("BisectingKMeans", "check_estimators_dtypes"): (
-        "Real gap: fitted cluster-center arrays kept as float32 get widened to float64 by the "
-        "generic JSON round-trip (JSON has one numeric type), so predict()'s Cython inner loop "
-        "later raises 'Buffer dtype mismatch, expected const float but got double'. Passes at "
-        "baseline with roundtrip_fit disabled - tracked for a follow-up fix (dtype needs to be "
-        "preserved/restored explicitly for estimators that fit in float32)."
     ),
     ("LogisticRegressionCV", "check_sparsify_coefficients"): (
         "Pre-existing sklearn/check fragility, unrelated to serialization: fails identically "
