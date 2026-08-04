@@ -85,13 +85,12 @@ def roundtrip_fit(
     round-tripped models: any assertion they make about a fitted estimator becomes, implicitly,
     an openmodels fidelity check.
     """
-    manager = SerializationManager(SklearnSerializer())
+    serializer = SklearnSerializer()
+    manager = SerializationManager(serializer)
     originals: dict = {}
 
     def _roundtrip(instance) -> None:
-        fitted_keys = manager.model_serializer._extract_estimator_attributes(
-            instance
-        ).keys()
+        fitted_keys = serializer._extract_estimator_attributes(instance).keys()
         serialized = manager.serialize(instance, format_name=format_name)
         deserialized = manager.deserialize(serialized, format_name=format_name)
         for key in fitted_keys:

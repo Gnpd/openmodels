@@ -8,7 +8,7 @@ converted to and from dictionary representations.
 from typing import Any, Callable, Dict, List, Tuple, Type, Optional, Union
 import numpy as np
 import inspect
-from scipy.sparse import issparse
+from scipy.sparse import issparse  # type: ignore
 
 from ._custom_estimator import load_custom_estimators
 
