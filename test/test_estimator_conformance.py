@@ -154,7 +154,6 @@ KNOWN_ROUNDTRIP_XFAILS.update(
             "HuberRegressor": _BOTH_SAMPLE_WEIGHT_CHECKS,
             "IsolationForest": _BOTH_SAMPLE_WEIGHT_CHECKS,
             "KMeans": _BOTH_SAMPLE_WEIGHT_CHECKS,
-            "KernelRidge": ["check_sample_weight_equivalence_on_sparse_data"],
             "LinearSVC": _BOTH_SAMPLE_WEIGHT_CHECKS,
             "LinearSVR": _BOTH_SAMPLE_WEIGHT_CHECKS,
             "MiniBatchKMeans": _BOTH_SAMPLE_WEIGHT_CHECKS,
@@ -193,70 +192,6 @@ KNOWN_ROUNDTRIP_XFAILS.update(
             "Ridge": ["check_non_transformer_estimators_n_iter"],
             "RidgeClassifier": ["check_non_transformer_estimators_n_iter"],
             "SelfTrainingClassifier": ["check_non_transformer_estimators_n_iter"],
-        },
-    )
-)
-
-# Real, scoped openmodels gap surfaced by this suite: the sparse (de)serializer in
-# openmodels/serializers/base.py only registers a handler for scipy.sparse.csr_matrix
-# (ScipySerializerMixin._get_serializer_handlers), so csc_matrix and the newer scipy/sklearn
-# array-API sparse containers (csr_array, csc_array, ...) raise "not JSON serializable" instead
-# of round-tripping. sklearn 1.9's check_estimator machinery increasingly exercises estimators
-# with csr_array. Only bites estimators that actually declare + exercise sparse support in these
-# specific checks - most estimators correctly reject/ignore sparse input before ever reaching
-# serialization, so this is listed per-estimator (confirmed via the strict xfail mechanism
-# below) rather than as a blanket check-level skip. Worth a real fix (broaden the handler to
-# scipy.sparse.issparse(), not just csr_matrix) as a follow-up - out of scope for this change.
-_SPARSE_GAP_REASON = (
-    "openmodels's sparse (de)serializer only handles scipy.sparse.csr_matrix; "
-    "csc_matrix/csr_array/csc_array are not yet supported."
-)
-KNOWN_ROUNDTRIP_XFAILS.update(
-    _entries(
-        _SPARSE_GAP_REASON,
-        {
-            "AffinityPropagation": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-            ],
-            "DBSCAN": ["check_estimator_sparse_tag", "check_estimator_sparse_array"],
-            "Isomap": ["check_estimator_sparse_tag", "check_estimator_sparse_array"],
-            "KNeighborsClassifier": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-            ],
-            "KNeighborsRegressor": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-            ],
-            "KNeighborsTransformer": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-            ],
-            "KernelPCA": ["check_estimator_sparse_tag", "check_estimator_sparse_array"],
-            "KernelRidge": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-                "check_estimator_sparse_matrix",
-            ],
-            "LabelPropagation": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-                "check_estimator_sparse_matrix",
-            ],
-            "NearestNeighbors": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-            ],
-            "Nystroem": ["check_estimator_sparse_tag", "check_estimator_sparse_array"],
-            "RadiusNeighborsClassifier": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-            ],
-            "RadiusNeighborsRegressor": [
-                "check_estimator_sparse_tag",
-                "check_estimator_sparse_array",
-            ],
         },
     )
 )
