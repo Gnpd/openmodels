@@ -5,6 +5,22 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.22] - 2026-08-04
+
+### Added
+
+- `roundtrip_fit()` test helper (`openmodels/test_helpers.py`): monkeypatches `fit()`/`fit_transform()`/`fit_predict()` on given estimator classes so their fitted state is replaced with the result of an openmodels serialize→deserialize round-trip, letting any existing test suite double as a round-trip fidelity check
+- `test/test_estimator_conformance.py`: runs scikit-learn's own generic `parametrize_with_checks()` battery against round-tripped instances of every estimator openmodels supports, with a strict, per-(estimator, check) xfail list distinguishing known openmodels gaps from pre-existing sklearn/check fragility
+- `test/upstream/`: reuses scikit-learn's own `cross_decomposition` test suite (`test_pls.py`) unmodified against `PLSRegression`/`PLSCanonical`/`CCA`/`PLSSVD` via a `conftest.py` that registers sklearn's test fixtures as a pytest plugin
+- `test/_estimator_construction.py`: shared registry of minimal constructor arguments for meta-estimators that can't be built with bare defaults (e.g. `estimator=` for `ClassifierChain`, `RFE`, `StackingRegressor`), replacing duplicated per-file special-casing across the smoke test modules
+- scikit-learn 1.9.0 added to the README/docs compatibility matrix
+
+### Fixed
+
+- `PLSRegression`, `CCA`, `PLSCanonical`, and `PLSSVD` were missing `_x_std`/`_y_mean`/`_y_std` from `ATTRIBUTE_EXCEPTIONS`, so `predict()` on a round-tripped model silently used unfitted/default scaling statistics instead of the values learned during `fit()`
+- `test_others.py` estimator discovery now filters through `ALL_ESTIMATORS` so experimental-only estimators that become discoverable as a side effect of importing `sklearn.utils.estimator_checks` (e.g. `HalvingGridSearchCV`) aren't constructed without openmodels actually knowing how to serialize them
+- README: corrected the scikit-learn compatibility workflow description (it runs on-demand via `workflow_dispatch`, not on every push to `main` and weekly, since push/schedule triggers were removed) and fixed a stale placeholder clone URL
+
 ## [0.1.0-alpha.21] - 2026-03-14
 
 ### Added

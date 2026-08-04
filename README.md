@@ -171,13 +171,14 @@ You can pass any compatible `all_estimators` function, list, or dictionary to `S
 
 ## scikit-learn Version Compatibility
 
-OpenModels is automatically tested against the following scikit-learn versions on every push to `main` and weekly via CI:
+OpenModels is tested against the following scikit-learn versions via the on-demand [`scikit-learn compatibility`](https://github.com/Gnpd/openmodels/actions/workflows/sklearn-compat.yml) CI workflow:
 
 | scikit-learn | Status |
 |---|---|
 | 1.6.1 | ✅ Tested |
 | 1.7.2 | ✅ Tested |
 | 1.8.0 | ✅ Tested |
+| 1.9.0 | ✅ Tested |
 
 If you encounter any incompatibility or a use case where the library does not work correctly with your version of scikit-learn, please [open an issue](https://github.com/Gnpd/openmodels/issues/new) — we would greatly appreciate your feedback!
 
@@ -196,7 +197,7 @@ To run the tests:
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/your-repo/openmodels.git
+   git clone https://github.com/Gnpd/openmodels.git
    cd openmodels
    ```
 
