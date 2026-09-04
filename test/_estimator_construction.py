@@ -105,6 +105,9 @@ CONSTRUCTOR_ARGS: Dict[str, Dict[str, Any]] = {
     "CCA": {"n_components": 1},
     "PLSCanonical": {"n_components": 1},
     "PLSSVD": {"n_components": 1},
+    # predict() only exists when novelty=True (default novelty=False is fit_predict-only,
+    # train-set-only outlier labels) - not an openmodels limitation, a scikit-learn API one.
+    "LocalOutlierFactor": {"novelty": True},
 }
 
 # Composite/meta transformers whose valid construction and/or expected input shape is too
@@ -118,6 +121,7 @@ NOT_CHECKED: Dict[str, str] = {
     "SparseCoder": "dictionary must be sized to match n_features",
     "DictVectorizer": "expects list-of-dicts input, not a 2D array",
     "HashingVectorizer": "expects text input, not a 2D array",
+    "PatchExtractor": "operates on (n_images, height, width[, n_channels]) image-batch arrays, not the 2D tabular array check_estimator's synthetic data uses - not an openmodels round-trip issue",
     "FeatureHasher": "expects dicts/strings input, not a 2D array",
     "LabelBinarizer": "fits/transforms on y only, not X",
     "LabelEncoder": "fits/transforms on y only, not X",

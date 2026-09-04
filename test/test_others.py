@@ -7,6 +7,7 @@ from test.test_classification import CLASSIFIERS
 from test.test_clustering import CLUSTERS
 from test.test_regression import REGRESSORS
 from test.test_transformation import TRANSFORMERS
+from test._estimator_construction import CONSTRUCTOR_ARGS
 
 # Get all other estimators, filtering out not supported. Also excludes anything all_estimators()
 # discovers but ALL_ESTIMATORS doesn't know about: ALL_ESTIMATORS is frozen at whatever
@@ -106,6 +107,8 @@ def test_others(Others, data):
         from scipy.stats import uniform
         args["estimator"] = LogisticRegression()
         args["param_distributions"] = {"C": uniform(0.1, 1.0)}
+    if Others.__name__ == "LocalOutlierFactor":
+        args.update(CONSTRUCTOR_ARGS["LocalOutlierFactor"])
 
     others = Others(**args)
 

@@ -62,15 +62,13 @@ Most scikit-learn transformers are supported, including:
 - `IsolationForest`
 - `OneClassSVM`
 - `NearestNeighbors`
+- `LocalOutlierFactor` (requires `novelty=True` for `predict()` - a scikit-learn API
+  restriction, not an openmodels one; the default `novelty=False` mode is `fit_predict()`-only
+  and has no `predict()` to round-trip)
+- `PatchExtractor` (expects an `(n_images, height, width[, n_channels])` image-batch array, not
+  standard 2D tabular data)
 
-## Not Currently Supported
-
-A small number of scikit-learn estimators are not yet supported:
-
-| Estimator | Reason |
-|---|---|
-| `PatchExtractor` | Value unpacking error during serialization |
-| `LocalOutlierFactor` | Missing `predict` attribute after deserialization |
+Every scikit-learn estimator discoverable via `SklearnSerializer.all_estimators()` is supported.
 
 ## Custom & Third-Party Estimators
 

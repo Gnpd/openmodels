@@ -32,6 +32,19 @@ stability commitment.
   distinguishing the JSON format (plain data, safe on untrusted input) from the Pickle format
   (`pickle.loads()` can execute arbitrary code — trusted sources only). The same warning was
   added to `PickleConverter`'s docstrings and the README
+- Full scikit-learn estimator support: `PatchExtractor` and `LocalOutlierFactor` are now
+  supported, closing the last two entries in `NOT_SUPPORTED_ESTIMATORS`. Neither was a real
+  serialization gap - both were artifacts of this repo's own test-harness construction/data
+  choices, not of `SklearnSerializer`:
+  - `LocalOutlierFactor.predict()` only exists when constructed with `novelty=True` (a
+    scikit-learn API restriction, not an openmodels one - the default `novelty=False` mode is
+    `fit_predict()`-only, with no `predict()` to round-trip). Its private fit-time attributes
+    (`_fit_method`, `_tree`, `_fit_X`, `_distances_fit_X_`, `_lrd`) are now captured via
+    `ATTRIBUTE_EXCEPTIONS`, the same pattern already used for `KNeighborsClassifier`/
+    `NearestNeighbors`.
+  - `PatchExtractor` is stateless (`.fit()` sets no attributes) and expects an
+    `(n_images, height, width[, n_channels])` image-batch array rather than standard 2D tabular
+    data; it already round-tripped correctly once given properly-shaped input.
 
 ### Fixed
 

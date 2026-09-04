@@ -89,11 +89,8 @@ NOT_SUPPORTED_ESTIMATORS: list[str] = [
     # Regressors: all regressors work!! Hurray!
     # Classifiers: all classifiers work!! Hurray!
     # Clusters: all clusters work!! Hurray!
-    # Exceptions encountered during testing:
-    # Transformers:
-    "PatchExtractor",  # ValueError: not enough values to unpack (expected 3, got 2)
-    # Others:
-    "LocalOutlierFactor",  # AttributeError: This 'LocalOutlierFactor' has no attribute 'predict'
+    # Transformers: all transformers work!! Hurray!
+    # Others: all others work!! Hurray!
 ]
 
 
@@ -219,6 +216,13 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_intercept_",
     ],
     "NearestNeighbors": ["_fit_method", "_tree", "_fit_X"],
+    "LocalOutlierFactor": [
+        "_fit_method",
+        "_tree",
+        "_fit_X",
+        "_distances_fit_X_",
+        "_lrd",
+    ],
     "TfidfVectorizer": ["_tfidf"],
 }
 
