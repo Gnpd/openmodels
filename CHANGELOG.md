@@ -45,6 +45,15 @@ stability commitment.
   - `PatchExtractor` is stateless (`.fit()` sets no attributes) and expects an
     `(n_images, height, width[, n_channels])` image-batch array rather than standard 2D tabular
     data; it already round-tripped correctly once given properly-shaped input.
+- `openmodels_format_version`/`openmodels_version` fields on the serialized dict (see
+  [issue #40](https://github.com/Gnpd/openmodels/issues/40)): the former records the wire
+  format's own shape version (independent of `producer_version`, which only ever recorded
+  scikit-learn's version), so future format changes have a field to check against instead of
+  relying solely on ad hoc `.get(key, default)` fallbacks; the latter records the openmodels
+  release that wrote the file, for tracing whether a file predates a particular bug fix. Both
+  are purely additive - old files without them deserialize exactly as before, and a file with a
+  `openmodels_format_version` newer than what's installed warns instead of failing outright.
+  Also added `docs/format.md`, documenting the full serialized-model schema
 
 ### Fixed
 

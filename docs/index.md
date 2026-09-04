@@ -49,5 +49,6 @@ Check out the {doc}`getting_started` guide for a full walkthrough.
 
 getting_started
 supported_models
+format
 api
 ```
