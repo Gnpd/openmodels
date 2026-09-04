@@ -103,14 +103,19 @@ class TensorFlowSerializer(ModelSerializer):
 
 ## Supported Models (scikit-learn)
 
-OpenModels currently supports a wide range of scikit-learn models, including:
+OpenModels supports every scikit-learn estimator, including:
 
 - Classification: LogisticRegression, SVC, etc.
 - Regression: LinearRegression, SVR, etc.
 - Clustering: KMeans
 - Dimensionality Reduction: PCA
 
-For a full list of supported models, you can programmatically retrieve them using the `SklearnSerializer.all_estimators()` method:
+See the [Supported Models](https://gnpd.github.io/openmodels/supported_models.html) docs page
+for the full breakdown by category, and the
+[serialized format reference](https://gnpd.github.io/openmodels/format.html) for what actually
+gets written to disk.
+
+You can also retrieve the list programmatically using the `SklearnSerializer.all_estimators()` method:
 
 ```python
 from openmodels.serializers import SklearnSerializer
@@ -127,8 +132,6 @@ print([name for name, cls in classifiers])
 regressors = SklearnSerializer.all_estimators(type_filter="regressor")
 print([name for name, cls in regressors])
 ```
-
-This will print the names of all scikit-learn estimators supported by OpenModels, filtered to exclude those that are not currently supported.
 
 ## Using Custom Estimators and Pipelines (Third-Party Support)
 

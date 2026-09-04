@@ -1,11 +1,11 @@
 # Supported Models
 
-OpenModels currently supports **scikit-learn** estimators. The library has been tested against
-scikit-learn versions **1.6.1**, **1.7.2**, **1.8.0**, and **1.9.0**.
+OpenModels supports **every** scikit-learn estimator, out of the box. The library has been
+tested against scikit-learn versions **1.6.1**, **1.7.2**, **1.8.0**, and **1.9.0**.
 
 ## scikit-learn
 
-Nearly all scikit-learn estimators are supported out of the box, including:
+All scikit-learn estimators are supported, including:
 
 ### Regressors
 
@@ -46,7 +46,7 @@ All scikit-learn clustering estimators are supported, including:
 
 ### Transformers
 
-Most scikit-learn transformers are supported, including:
+All scikit-learn transformers are supported, including:
 
 - `PCA`, `KernelPCA`
 - `OneHotEncoder`, `OrdinalEncoder`, `LabelBinarizer`
@@ -55,9 +55,13 @@ Most scikit-learn transformers are supported, including:
 - `PowerTransformer`, `PolynomialFeatures`
 - `TfidfVectorizer`
 - `TargetEncoder`, `KBinsDiscretizer`
+- `PatchExtractor` (expects an `(n_images, height, width[, n_channels])` image-batch array, not
+  standard 2D tabular data)
 - And many more...
 
 ### Other Estimators
+
+All other scikit-learn estimators are supported, including:
 
 - `IsolationForest`
 - `OneClassSVM`
@@ -65,10 +69,10 @@ Most scikit-learn transformers are supported, including:
 - `LocalOutlierFactor` (requires `novelty=True` for `predict()` - a scikit-learn API
   restriction, not an openmodels one; the default `novelty=False` mode is `fit_predict()`-only
   and has no `predict()` to round-trip)
-- `PatchExtractor` (expects an `(n_images, height, width[, n_channels])` image-batch array, not
-  standard 2D tabular data)
+- And many more...
 
-Every scikit-learn estimator discoverable via `SklearnSerializer.all_estimators()` is supported.
+Every scikit-learn estimator discoverable via `SklearnSerializer.all_estimators()` is supported -
+see {doc}`format` for the details of what gets serialized.
 
 ## Custom & Third-Party Estimators
 
