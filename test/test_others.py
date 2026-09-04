@@ -2,16 +2,22 @@ import pytest
 from sklearn.utils.discovery import all_estimators
 from sklearn.datasets import make_classification
 from openmodels.test_helpers import run_test_model
-from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from openmodels.serializers.sklearn.sklearn_serializer import ALL_ESTIMATORS, NOT_SUPPORTED_ESTIMATORS
 from test.test_classification import CLASSIFIERS
 from test.test_clustering import CLUSTERS
 from test.test_regression import REGRESSORS
 from test.test_transformation import TRANSFORMERS
 
-# Get all other estimators, filtering out not supported
+# Get all other estimators, filtering out not supported. Also excludes anything all_estimators()
+# discovers but ALL_ESTIMATORS doesn't know about: ALL_ESTIMATORS is frozen at whatever
+# all_estimators() returned when sklearn_serializer.py was first imported, so an
+# experimental-only estimator (e.g. HalvingGridSearchCV) that becomes discoverable later in the
+# process - such as importing sklearn.utils.estimator_checks, which enables it as a side effect -
+# would be constructible here but not actually deserializable by openmodels, raising KeyError.
 OTHERS = [cls for name, cls in all_estimators()
         if cls not in CLASSIFIERS + CLUSTERS + REGRESSORS + TRANSFORMERS
         and name not in NOT_SUPPORTED_ESTIMATORS
+        and name in ALL_ESTIMATORS
         ]
 
 # Define constants
@@ -91,6 +97,15 @@ def test_others(Others, data):
         base_estimator = LogisticRegression()
         args["estimator"] = base_estimator
         args["param_distributions"] = param_distributions
+    if Others.__name__ == "HalvingGridSearchCV":
+        from sklearn.linear_model import LogisticRegression
+        args["estimator"] = LogisticRegression()
+        args["param_grid"] = {"C": [0.1, 1.0]}
+    if Others.__name__ == "HalvingRandomSearchCV":
+        from sklearn.linear_model import LogisticRegression
+        from scipy.stats import uniform
+        args["estimator"] = LogisticRegression()
+        args["param_distributions"] = {"C": uniform(0.1, 1.0)}
 
     others = Others(**args)
 

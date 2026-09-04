@@ -1,7 +1,7 @@
 # Supported Models
 
 OpenModels currently supports **scikit-learn** estimators. The library has been tested against
-scikit-learn versions **1.6.1**, **1.7.2**, and **1.8.0**.
+scikit-learn versions **1.6.1**, **1.7.2**, **1.8.0**, and **1.9.0**.
 
 ## scikit-learn
 

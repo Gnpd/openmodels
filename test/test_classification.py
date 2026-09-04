@@ -1,10 +1,10 @@
 import pytest
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 from sklearn.utils.discovery import all_estimators
 from sklearn.datasets import make_classification
 from openmodels.test_helpers import run_test_model
 from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from test._estimator_construction import BASE_CLASSIFIER, CONSTRUCTOR_ARGS
 
 # Get all classifier estimators, filtering out not supported classifiers
 CLASSIFIERS = [cls for name, cls in all_estimators(type_filter="classifier")
@@ -48,31 +48,29 @@ def test_classifier(Classifier, data):
     args = {}
 
     abs = False
-    base_lr = LogisticRegression(solver='lbfgs', random_state=0)
+    base_lr = BASE_CLASSIFIER
 
     if Classifier.__name__ in ["CategoricalNB", "ComplementNB", "MultinomialNB"]:
         abs = True
     elif Classifier.__name__ == "ClassifierChain":
-        args["estimator"] = base_lr
+        args.update(CONSTRUCTOR_ARGS["ClassifierChain"])
         y_multi = np.column_stack([(y == i).astype(int) for i in np.unique(y)])
         y = y_multi
     elif Classifier.__name__ in ["FixedThresholdClassifier", "TunedThresholdClassifierCV"]:
-        args["estimator"] = base_lr
+        args.update(CONSTRUCTOR_ARGS[Classifier.__name__])
         y_binary = (y == 0).astype(int)
         y = y_binary
     elif Classifier.__name__ in ["OneVsOneClassifier", "OutputCodeClassifier", "SelfTrainingClassifier"]:
-        args["estimator"] = base_lr
+        args.update(CONSTRUCTOR_ARGS[Classifier.__name__])
     elif Classifier.__name__ in ["MultiOutputClassifier", "OneVsRestClassifier"]:
-        args["estimator"] = base_lr
+        args.update(CONSTRUCTOR_ARGS[Classifier.__name__])
         y_multi = np.column_stack([(y == i).astype(int) for i in np.unique(y)])
         y = y_multi
     elif Classifier.__name__ == "StackingClassifier":
+        # Data-dependent (one sub-estimator per class label) - can't be a static shared entry.
         args["estimators"] = [(str(name), base_lr) for name in np.unique(y)]
     elif Classifier.__name__ == "VotingClassifier":
-        args["estimators"] = [
-            ("lr", LogisticRegression(solver='lbfgs', random_state=0)),
-            ("lr2", LogisticRegression(solver='lbfgs', random_state=1))
-        ]
+        args.update(CONSTRUCTOR_ARGS["VotingClassifier"])
 
     classifier = Classifier(**args)
     

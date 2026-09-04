@@ -34,6 +34,16 @@ jobs:
     strategy:
       matrix:
         python-version: ${{ fromJson(needs.setup.outputs.matrix) }}
+    env:
+      # Pin BLAS/LAPACK to a single thread so numerical routines (e.g. ARPACK eigensolvers
+      # used by SpectralEmbedding) are bit-reproducible across runs. Without this,
+      # multi-threaded OpenBLAS can nondeterministically reorder floating-point reductions,
+      # which for near-degenerate eigenvalues can flip which eigenvector converges into which
+      # slot - causing rare, environment-dependent CI flakes unrelated to serialization.
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
 
     steps:
       - uses: actions/checkout@v6
@@ -118,47 +128,3 @@ jobs:
         with:
           name: python-package-distributions
           path: dist/
-
-  publish-test:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry
-
-      - name: Download all the dists
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-
-      - name: Check if version already published to TestPyPI
-        id: check-version
-        run: |
-          current_version=$(poetry version -s)
-          status=$(curl -s -o /dev/null -w "%{http_code}" "https://test.pypi.org/pypi/openmodels/${current_version}/json")
-          if [ "$status" == "200" ]; then
-            echo "Version $current_version already exists on TestPyPI, skipping publish."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish package to TestPyPI
-        if: steps.check-version.outputs.skip == 'false'
-        env:
-          TEST_PYPI_API_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        run: |
-          poetry config repositories.testpypi https://test.pypi.org/legacy/
-          poetry publish --repository testpypi --username __token__ --password $TEST_PYPI_API_TOKEN

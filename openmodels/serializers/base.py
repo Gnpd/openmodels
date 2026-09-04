@@ -8,7 +8,7 @@ support for new serialization targets.
 """
 
 import numpy as np
-from scipy.sparse import csr_matrix  # type: ignore
+from scipy.sparse import csr_matrix, csc_matrix, csr_array, csc_array  # type: ignore
 from scipy.interpolate import interp1d, BSpline  # type: ignore
 from scipy.stats._distn_infrastructure import rv_continuous_frozen  # type: ignore
 import scipy.stats  # type: ignore
@@ -32,7 +32,17 @@ class SerializerMixin:
 
         # Recursive case: dict, list, tuple
         if isinstance(value, dict):
-            return {str(k): self.convert_to_serializable(v) for k, v in value.items()}
+            if all(isinstance(k, str) for k in value):
+                return {k: self.convert_to_serializable(v) for k, v in value.items()}
+            # Non-string keys (e.g. int) can't be represented as JSON object keys without
+            # losing their type, so fall back to a self-describing keys/values envelope that
+            # _deserialize_dict can reconstruct exactly.
+            return {
+                "__openmodels_dict__": True,
+                "keys": [self.convert_to_serializable(k) for k in value.keys()],
+                "key_types": [type(k).__name__ for k in value.keys()],
+                "values": [self.convert_to_serializable(v) for v in value.values()],
+            }
 
         if isinstance(value, (list, tuple)):
             return [self.convert_to_serializable(v) for v in value]
@@ -98,6 +108,21 @@ class SerializerMixin:
         module = __import__(data["module"], fromlist=[data["name"]])
         return getattr(module, data["name"])
 
+    def _deserialize_dict(self, value: Any) -> Any:
+        """Deserialize a dict, restoring non-string key types for the envelope produced by
+        convert_to_serializable's dict branch. Plain string-keyed dicts (the common case,
+        including dicts produced by older openmodels versions) pass through unchanged.
+        """
+        if isinstance(value, dict) and value.get("__openmodels_dict__"):
+            allowed_key_types = {"int": int, "float": float, "bool": bool, "str": str}
+            return {
+                allowed_key_types.get(kt, lambda x: x)(
+                    k
+                ): self.convert_from_serializable(v)
+                for k, kt, v in zip(value["keys"], value["key_types"], value["values"])
+            }
+        return value
+
     # --- Handlers ---
     def _get_serializer_handlers(self):
         """Each mixin extends this list."""
@@ -116,6 +141,7 @@ class SerializerMixin:
             ("str", str),
             ("type", self._deserialize_type),
             ("tuple", tuple),
+            ("dict", self._deserialize_dict),
             ("function", self._deserialize_function),
         ]
 
@@ -282,7 +308,14 @@ class ScipySerializerMixin(SerializerMixin):
     def _get_serializer_handlers(self):
         return [
             (BSpline, self._serialize_bspline),
-            (csr_matrix, self._serialize_csr_matrix),
+            # csr_matrix is the only sparse container openmodels round-trips on the wire, but
+            # any scipy sparse container (the older *_matrix family or the newer array-API
+            # *_array family) is accepted here - _serialize_csr_matrix normalizes it to csr via
+            # the csr_matrix(value) constructor, which accepts any sparse-like input.
+            (
+                (csr_matrix, csc_matrix, csr_array, csc_array),
+                self._serialize_csr_matrix,
+            ),
             (interp1d, self._serialize_interp1d),
             (rv_continuous_frozen, self._serialize_scipy_dist),
         ] + super()._get_serializer_handlers()

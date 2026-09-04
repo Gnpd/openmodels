@@ -8,12 +8,13 @@ converted to and from dictionary representations.
 from typing import Any, Callable, Dict, List, Tuple, Type, Optional, Union
 import numpy as np
 import inspect
+from scipy.sparse import issparse  # type: ignore
 
 from ._custom_estimator import load_custom_estimators
 
 import sklearn
 from sklearn.calibration import _CalibratedClassifier, _SigmoidCalibration
-from sklearn.cluster._birch import _CFNode
+from sklearn.cluster._birch import _CFNode, _CFSubcluster
 from sklearn.cluster._bisect_k_means import _BisectingTree
 from sklearn.ensemble._hist_gradient_boosting.predictor import TreePredictor
 from sklearn.ensemble._hist_gradient_boosting.binning import _BinMapper
@@ -99,7 +100,7 @@ NOT_SUPPORTED_ESTIMATORS: list[str] = [
 # Dictionary of attribute exceptions
 ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     # Regressors:
-    "PLSRegression": ["_x_mean", "_predict_1d"],
+    "PLSRegression": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "SVR": [
         "_sparse",
         "_n_support",
@@ -132,10 +133,10 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_bin_mapper",
     ],
     "RadiusNeighborsRegressor": ["_fit_method", "_fit_X", "_y"],
-    "CCA": ["_x_mean", "_predict_1d"],
+    "CCA": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "GammaRegressor": ["_base_loss"],
     "PoissonRegressor": ["_base_loss"],
-    "PLSCanonical": ["_x_mean", "_predict_1d"],
+    "PLSCanonical": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "IsotonicRegression": ["f_"],
     "TransformedTargetRegressor": ["_training_dim"],
     # Clusters:
@@ -199,7 +200,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "MissingIndicator": ["_n_features", "_precomputed"],
     "MultiLabelBinarizer": ["_cached_dict"],
     "PolynomialFeatures": ["_max_degree", "_n_out_full", "_min_degree"],
-    "PLSSVD": ["_x_mean", "_x_std"],
+    "PLSSVD": ["_x_mean", "_x_std", "_y_mean", "_y_std"],
     "TargetEncoder": ["_infrequent_enabled"],
     # Others:
     "IsolationForest": [
@@ -292,6 +293,11 @@ class SklearnSerializer(
             else {}
         )
         self._all_estimators: Dict[str, Type] = {**ALL_ESTIMATORS, **extra}
+        # Scratch state for one deserialize() call: (node, "prev_leaf_"|"next_leaf_") pairs
+        # a Birch _CFNode's leaf-chain pointer couldn't resolve within its own subtree (root_
+        # and dummy_leaf_ are independently-deserialized top-level attributes; the pointer
+        # crossing between them is fixed up once both are set, see _resolve_birch_leaf_links).
+        self._birch_pending_leaf_links: List[Tuple[Any, str]] = []
 
     # --- Helpers ---
     def _check_version(self, stored_version: Optional[str]) -> None:
@@ -394,6 +400,18 @@ class SklearnSerializer(
         elif isinstance(item, BaseEstimator):
             # For estimators, return their class name instead of just 'BaseEstimator'
             return item.__class__.__name__
+        elif isinstance(item, np.dtype):
+            # Normalize to a single stable tag: concrete np.dtype instances are actually
+            # instances of numpy-internal per-dtype subclasses (Float64DType, Int64DType,
+            # BoolDType, ...), so type(item).__name__ is not a stable/registrable tag.
+            return "dtype"
+        elif issparse(item):
+            # Normalize every scipy sparse container (csr_matrix, csc_matrix, csr_array,
+            # csc_array, ...) to the one tag ScipySerializerMixin actually registers a
+            # deserializer for - _serialize_csr_matrix already converts any of them to csr_matrix
+            # via the csr_matrix(value) constructor, so type(item).__name__ (e.g. "csr_array")
+            # would tag a value the deserializer dispatch table has no matching entry for.
+            return "csr_matrix"
         else:
             # Return the type name if it's not a list or it's an empty list
             return type(item).__name__
@@ -498,9 +516,17 @@ class SklearnSerializer(
 
     # --- Sklearn specific serializers/deserializers ---
     def _serialize_bisecting_tree(self, tree: _BisectingTree) -> dict:
+        # center/indices are serialized with an explicit dtype (rather than relying on the
+        # generic convert_to_serializable, which loses dtype via a plain .tolist()) so that
+        # e.g. a float32-fitted tree doesn't get silently widened to JSON's float64 on the
+        # way back - predict()'s Cython inner loop requires the exact original buffer dtype.
+        center = np.asarray(tree.center)
+        indices = np.asarray(tree.indices)
         return {
-            "center": self.convert_to_serializable(tree.center),
-            "indices": self.convert_to_serializable(tree.indices),
+            "center": self.convert_to_serializable(center),
+            "center_dtype": str(center.dtype),
+            "indices": self.convert_to_serializable(indices),
+            "indices_dtype": str(indices.dtype),
             "score": tree.score,
             "label": getattr(tree, "label", None),
             "left": self._serialize_bisecting_tree(tree.left) if tree.left else None,
@@ -511,8 +537,8 @@ class SklearnSerializer(
         if data is None:
             return None
         node = _BisectingTree(
-            center=self.convert_from_serializable(data["center"]),
-            indices=self.convert_from_serializable(data["indices"]),
+            center=np.array(data["center"], dtype=data.get("center_dtype")),
+            indices=np.array(data["indices"], dtype=data.get("indices_dtype")),
             score=data["score"],
         )
         if data.get("label") is not None:
@@ -544,26 +570,175 @@ class SklearnSerializer(
         )
 
     def _serialize_cfnode(self, node: _CFNode) -> Dict[str, Any]:
-        """Recursively serialize a _CFNode."""
-        return {
-            "threshold": node.threshold,
-            "branching_factor": node.branching_factor,
-            "is_leaf": node.is_leaf,
-            "n_features": node.n_features,
-            # dtype=X.dtype,
-        }
+        """
+        Recursively serialize a Birch _CFNode and its full subtree of _CFSubcluster/_CFNode
+        descendants (a _CFSubcluster's `child_` is where the tree actually recurses one level
+        down). Captures the real fitted state - not just the node's scalar config - so
+        predict()/partial_fit() keep working after a round-trip.
 
-    def _deserialize_cfnode(self, data: dict) -> _CFNode:
+        Also captures the doubly-linked prev_leaf_/next_leaf_ chain Birch threads across leaf
+        nodes only (used by Birch._get_leaves() for fast traversal). A leaf's neighbor can live
+        outside this node's own subtree - e.g. root_'s leftmost leaf's prev_leaf_ is
+        Birch.dummy_leaf_, a sibling top-level attribute serialized independently - such refs
+        are tagged "external" and cross-linked after deserialization by
+        _resolve_birch_leaf_links, since node_id namespaces are local to each top-level
+        _serialize_cfnode call.
+        """
+        node_ids: Dict[int, int] = {}
+
+        def get_id(n: _CFNode) -> int:
+            key = id(n)
+            if key not in node_ids:
+                node_ids[key] = len(node_ids)
+            return node_ids[key]
+
+        # Assign every reachable node an id up front so leaf_ref can resolve a ref to a node
+        # not yet visited by the (depth-first) serialize_node walk below.
+        def collect(n: _CFNode) -> None:
+            get_id(n)
+            for sub in n.subclusters_:
+                if sub.child_ is not None:
+                    collect(sub.child_)
+
+        collect(node)
+
+        def leaf_ref(neighbor: Optional[_CFNode]) -> Union[int, str, None]:
+            if neighbor is None:
+                return None
+            return node_ids.get(id(neighbor), "external")
+
+        def serialize_subcluster(sub: _CFSubcluster) -> Dict[str, Any]:
+            centroid = np.asarray(sub.centroid_)
+            linear_sum = np.asarray(sub.linear_sum_)
+            return {
+                "n_samples_": sub.n_samples_,
+                # squared_sum_/sq_norm_ are np.dot(...) results - numpy scalars (e.g.
+                # np.float32), not plain Python floats - so they need convert_to_serializable's
+                # np.generic handling (.item()) to be JSON-safe.
+                "squared_sum_": self.convert_to_serializable(sub.squared_sum_),
+                "sq_norm_": self.convert_to_serializable(sub.sq_norm_),
+                "linear_sum_": self.convert_to_serializable(linear_sum),
+                "linear_sum_dtype": str(linear_sum.dtype),
+                "centroid_": self.convert_to_serializable(centroid),
+                "centroid_dtype": str(centroid.dtype),
+                "child": serialize_node(sub.child_) if sub.child_ is not None else None,
+            }
+
+        def serialize_node(n: _CFNode) -> Dict[str, Any]:
+            return {
+                "node_id": get_id(n),
+                "threshold": n.threshold,
+                "branching_factor": n.branching_factor,
+                "is_leaf": n.is_leaf,
+                "n_features": n.n_features,
+                "dtype": str(n.init_centroids_.dtype),
+                "subclusters": [serialize_subcluster(sub) for sub in n.subclusters_],
+                "prev_leaf_ref": leaf_ref(n.prev_leaf_) if n.is_leaf else None,
+                "next_leaf_ref": leaf_ref(n.next_leaf_) if n.is_leaf else None,
+            }
+
+        return serialize_node(node)
+
+    def _deserialize_cfnode(self, data: dict) -> Optional[_CFNode]:
+        """
+        Deserialize a Birch _CFNode subtree (inverse of _serialize_cfnode). Rebuilds each node
+        by replaying the real _CFNode.append_subcluster()/_CFSubcluster construction path
+        rather than hand-assembling the init_centroids_/centroids_ view relationship, for
+        structural parity with what Birch.fit() itself produces.
+
+        Old (pre-fix) serialized files only ever captured a node's scalar config (no
+        "subclusters"/"node_id"/leaf-ref keys) - those fields are read via .get() with the
+        same defaults the old stub used, so old files keep deserializing to the same
+        structure-less (broken-but-non-crashing) node as before, not retroactively fixed.
+        """
         if data is None:
             return None
-        node = _CFNode(
-            threshold=data["threshold"],
-            branching_factor=data["branching_factor"],
-            is_leaf=data["is_leaf"],
-            n_features=data["n_features"],
-            dtype=np.float64,  # or use dtype from centroids if needed
-        )
-        return node
+
+        nodes: Dict[int, _CFNode] = {}
+
+        def deserialize_subcluster(sub_data: dict) -> _CFSubcluster:
+            linear_sum = np.array(
+                self.convert_from_serializable(sub_data["linear_sum_"]),
+                dtype=sub_data.get("linear_sum_dtype"),
+            )
+            subcluster = _CFSubcluster(linear_sum=linear_sum)
+            subcluster.n_samples_ = sub_data["n_samples_"]
+            subcluster.squared_sum_ = sub_data["squared_sum_"]
+            subcluster.sq_norm_ = sub_data["sq_norm_"]
+            subcluster.centroid_ = np.array(
+                self.convert_from_serializable(sub_data["centroid_"]),
+                dtype=sub_data.get("centroid_dtype"),
+            )
+            if sub_data.get("child") is not None:
+                subcluster.child_ = deserialize_node(sub_data["child"])
+            return subcluster
+
+        def deserialize_node(node_data: dict) -> _CFNode:
+            node = _CFNode(
+                threshold=node_data["threshold"],
+                branching_factor=node_data["branching_factor"],
+                is_leaf=node_data["is_leaf"],
+                n_features=node_data["n_features"],
+                dtype=np.dtype(node_data.get("dtype") or np.float64),
+            )
+            node_id = node_data.get("node_id")
+            if node_id is not None:
+                nodes[node_id] = node
+            for sub_data in node_data.get("subclusters", []):
+                node.append_subcluster(deserialize_subcluster(sub_data))
+            return node
+
+        root = deserialize_node(data)
+
+        # Second pass: wire up leaf refs now that every node in this subtree has been built
+        # (and thus has an id in `nodes`, regardless of forward/backward reference order).
+        def link_leaves(node_data: dict) -> None:
+            if node_data["is_leaf"]:
+                node = nodes[node_data["node_id"]]
+                for ref_key, attr in (
+                    ("prev_leaf_ref", "prev_leaf_"),
+                    ("next_leaf_ref", "next_leaf_"),
+                ):
+                    ref = node_data.get(ref_key)
+                    if ref is None:
+                        setattr(node, attr, None)
+                    elif ref == "external":
+                        self._birch_pending_leaf_links.append((node, attr))
+                    else:
+                        setattr(node, attr, nodes[ref])
+            for sub_data in node_data.get("subclusters", []):
+                if sub_data.get("child") is not None:
+                    link_leaves(sub_data["child"])
+
+        if "node_id" in data:
+            link_leaves(data)
+
+        return root
+
+    def _resolve_birch_leaf_links(self, model: BaseEstimator) -> None:
+        """
+        Cross-link the two independently-deserialized Birch._CFNode graphs (root_ and
+        dummy_leaf_): dummy_leaf_.next_leaf_ always points at the current globally-leftmost
+        leaf inside root_'s tree, and that leaf's prev_leaf_ points back at dummy_leaf_. Since
+        root_ and dummy_leaf_ are deserialized as independent top-level attributes (in
+        whichever order they appear in the serialized data), _deserialize_cfnode can't resolve
+        this pointer itself - it queues each side on self._birch_pending_leaf_links, and this
+        is called once both attributes are guaranteed to be set.
+        """
+        pending = self._birch_pending_leaf_links
+        self._birch_pending_leaf_links = []
+        prev_pending = [node for node, attr in pending if attr == "prev_leaf_"]
+        next_pending = [node for node, attr in pending if attr == "next_leaf_"]
+        if len(prev_pending) == 1 and len(next_pending) == 1:
+            prev_pending[0].prev_leaf_ = next_pending[0]
+            next_pending[0].next_leaf_ = prev_pending[0]
+        elif pending:
+            warnings.warn(
+                "Could not resolve Birch's dummy_leaf_/root_ leaf-chain link after "
+                "deserialization (unexpected pending link shape); partial_fit()/predict() may "
+                "not walk the full leaf chain.",
+                UserWarning,
+            )
 
     def _serialize_tree(self, tree: Tree) -> Dict[str, Any]:
         """
@@ -700,17 +875,20 @@ class SklearnSerializer(
         Serializes a KDTree object to a dictionary.
         """
         # For KDTree, we'll use a simpler approach - just serialize the essential data
-        # and let the tree be reconstructed from the data
+        # and let the tree be reconstructed from the data. dtype is captured explicitly
+        # (same reasoning as _serialize_bisecting_tree) so non-float64 data isn't silently
+        # widened by the generic JSON round-trip.
         data = np.array(value.data)
         return {
             "data": self.convert_to_serializable(data),
+            "data_dtype": str(data.dtype),
         }
 
     def _deserialize_kdtree(self, kdtree_data: Dict[str, Any]) -> KDTree:
         """
         Deserializes a dictionary representation of a KDTree back to a KDTree object.
         """
-        data = np.array(kdtree_data["data"])
+        data = np.array(kdtree_data["data"], dtype=kdtree_data.get("data_dtype"))
 
         # Create KDTree with data - the tree will be rebuilt automatically
         return KDTree(data)
@@ -945,6 +1123,9 @@ class SklearnSerializer(
         # Version control check
         self._check_version(data.get("producer_version"))
 
+        # Reset per-call scratch state used by _deserialize_cfnode/_resolve_birch_leaf_links.
+        self._birch_pending_leaf_links = []
+
         estimator_class = data["estimator_class"]
         if estimator_class in NOT_SUPPORTED_ESTIMATORS:
             raise UnsupportedEstimatorError(
@@ -1007,5 +1188,8 @@ class SklearnSerializer(
                 attribute,
                 self.convert_from_serializable(value, attr_type, attr_dtype),
             )
+
+        if estimator_class == "Birch" and self._birch_pending_leaf_links:
+            self._resolve_birch_leaf_links(model)
 
         return model

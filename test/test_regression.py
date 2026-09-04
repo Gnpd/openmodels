@@ -8,6 +8,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from openmodels.test_helpers import run_test_model
 from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTIMATORS
+from test._estimator_construction import CONSTRUCTOR_ARGS
 
 # Get all regressor estimators, filtering out not supported regressors
 REGRESSORS = [cls for name, cls in all_estimators(type_filter="regressor")
@@ -66,14 +67,12 @@ def test_regressor(Regressor, data):
         x, y = make_regression(n_samples=50, n_features=3, n_targets=2, random_state=42)
         x_sparse = None
         y_sparse = None
-        base_estimator = LinearRegression()
-        args = {"estimator": base_estimator}
+        args.update(CONSTRUCTOR_ARGS["MultiOutputRegressor"])
     elif Regressor.__name__ in ["RegressorChain"]:
         x, y = make_regression(n_samples=50, n_features=3, n_targets=2, random_state=42)
         x_sparse = None
         y_sparse = None
-        base_estimator = LinearRegression()
-        args = {"estimator": base_estimator}
+        args.update(CONSTRUCTOR_ARGS["RegressorChain"])
 
     elif Regressor.__name__ == "StackingRegressor":
         # Create simpler base estimators that are easier to serialize
