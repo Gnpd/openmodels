@@ -2,6 +2,10 @@
 Pickle converter for the OpenModels library.
 
 This module provides a converter for serializing to and from pickle format.
+
+.. warning::
+    Unpickling can execute arbitrary code. Only deserialize pickle data from sources you
+    trust - see SECURITY.md. Prefer the JSON format for data from untrusted sources.
 """
 
 import pickle
@@ -16,6 +20,11 @@ class PickleConverter(FormatConverter):
 
     This class provides static methods to convert between dictionary
     representations and pickle byte strings.
+
+    .. warning::
+        ``deserialize_from_format`` calls ``pickle.loads()``, which can execute arbitrary
+        code as part of deserialization. Only use this converter with pickle data from
+        sources you trust.
     """
 
     @staticmethod
@@ -54,5 +63,10 @@ class PickleConverter(FormatConverter):
         ------
         pickle.UnpicklingError
             If the input bytes cannot be unpickled.
+
+        Warns
+        -----
+        Unpickling can execute arbitrary code. Only call this with pickle data from a
+        source you trust.
         """
         return pickle.loads(formatted_data)
