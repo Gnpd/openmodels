@@ -5,6 +5,55 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0] - 2026-09-04
+
+First beta. Per [Semantic Versioning](https://semver.org/spec/v2.0.0.html), any `0.y.z`
+release is inherently pre-stable ("anything may change at any time"), so this is a plain
+release rather than a `-beta.N` prerelease tag — `1.0.0` will mark our first public API
+stability commitment.
+
+### Changed
+
+- **Breaking:** `SerializationManager.save()` no longer accepts an omitted `file_path`. It
+  previously wrote to a default `model.{ext}` filename in the current working directory when
+  none was given — unpredictable, since CWD depends on wherever the interpreter happened to be
+  launched from. `file_path` is now required, matching `load()`, which already required it
+- Migrated `pyproject.toml` from the deprecated `[tool.poetry]` metadata table to PEP 621's
+  `[project]` table; added `keywords`, `classifiers`, and `[project.urls]` (Homepage,
+  Repository, Documentation, Changelog, Issues); fixed `authors`, which was a single malformed
+  string with all three names/emails comma-joined into one array entry instead of three
+  separate entries
+- `.github/workflows/docs.yml` now also deploys on every push to `main`, in addition to the
+  existing manual `workflow_dispatch` trigger, so published docs stay in sync with `main`
+
+### Added
+
+- `SECURITY.md`: vulnerability reporting process, and a "Deserialization Safety" section
+  distinguishing the JSON format (plain data, safe on untrusted input) from the Pickle format
+  (`pickle.loads()` can execute arbitrary code — trusted sources only). The same warning was
+  added to `PickleConverter`'s docstrings and the README
+
+### Fixed
+
+- `ClassifierChain`/`RegressorChain` construction crashed test collection entirely on
+  scikit-learn 1.6.1: their wrapped-estimator constructor parameter was still named
+  `base_estimator` there (renamed to `estimator` in scikit-learn 1.7.0). Now detected
+  dynamically from the installed class's actual signature instead of a hardcoded name
+- `SpectralEmbedding`'s `check_pipeline_consistency` conformance check flaked intermittently in
+  CI: the check's default `n_neighbors` left its synthetic two-cluster dataset disconnected,
+  giving the graph Laplacian's zero eigenvalue multiplicity 2 — a genuinely degenerate
+  eigenspace, not just an ill-conditioned one — which ARPACK could resolve into either of two
+  valid-but-different bases depending on floating-point rounding. Fixed with a per-check
+  constructor override rather than changing the estimator's default construction globally
+  (which broke other checks fit on much smaller synthetic data)
+- mypy CI failures (untyped scipy import, protocol attribute access)
+
+### Removed
+
+- Stray `model.json`/`model.pkl`/`result.txt` committed at the repo root — leftover output
+  from a manual `save()` call with no path (see the `save()` fix above for the root cause).
+  Root-anchored `.gitignore` entries added so this can't recur
+
 ## [0.1.0-alpha.22] - 2026-08-04
 
 ### Removed
