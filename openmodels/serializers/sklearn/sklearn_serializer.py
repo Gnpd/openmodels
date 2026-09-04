@@ -6,6 +6,7 @@ converted to and from dictionary representations.
 """
 
 from typing import Any, Callable, Dict, List, Tuple, Type, Optional, Union
+from importlib.metadata import version as _package_version, PackageNotFoundError
 import numpy as np
 import inspect
 from scipy.sparse import issparse  # type: ignore
@@ -85,15 +86,28 @@ ALL_ESTIMATORS["_ConstantPredictor"] = _ConstantPredictor
 
 TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0"]
 
+# Version of openmodels's own wire format (the shape of the serialized dict), independent of
+# scikit-learn's version (producer_version) and of openmodels's own release version
+# (openmodels_version, informational only). Bump this only when the structure itself changes.
+OPENMODELS_FORMAT_VERSION = 1
+
+
+def _openmodels_version() -> str:
+    """Installed openmodels release version, read from package metadata so pyproject.toml
+    stays the single source of truth. Falls back to "unknown" for editable/from-source
+    installs without proper metadata."""
+    try:
+        return _package_version("openmodels")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 NOT_SUPPORTED_ESTIMATORS: list[str] = [
     # Regressors: all regressors work!! Hurray!
     # Classifiers: all classifiers work!! Hurray!
     # Clusters: all clusters work!! Hurray!
-    # Exceptions encountered during testing:
-    # Transformers:
-    "PatchExtractor",  # ValueError: not enough values to unpack (expected 3, got 2)
-    # Others:
-    "LocalOutlierFactor",  # AttributeError: This 'LocalOutlierFactor' has no attribute 'predict'
+    # Transformers: all transformers work!! Hurray!
+    # Others: all others work!! Hurray!
 ]
 
 
@@ -219,6 +233,13 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_intercept_",
     ],
     "NearestNeighbors": ["_fit_method", "_tree", "_fit_X"],
+    "LocalOutlierFactor": [
+        "_fit_method",
+        "_tree",
+        "_fit_X",
+        "_distances_fit_X_",
+        "_lrd",
+    ],
     "TfidfVectorizer": ["_tfidf"],
 }
 
@@ -325,6 +346,35 @@ class SklearnSerializer(
                 f"- Model serialized with scikit-learn {stored_version}\n"
                 f"- Current environment: scikit-learn {current_version}\n\n"
                 f"OpenModels has been tested under {TESTED_VERSIONS}. ",
+                UserWarning,
+            )
+
+    def _check_format_version(self, stored_version: Optional[int]) -> None:
+        """
+        Check compatibility between the stored openmodels wire-format version and the version
+        this installed openmodels understands.
+
+        Parameters
+        ----------
+        stored_version : int
+            The openmodels wire-format version recorded during serialization.
+
+        Notes
+        -----
+        - Issues a warning if the stored version is newer than what this installation
+          understands (the file may use a structure introduced after this release).
+        - Does nothing if no version is stored - true for every file written before this field
+          existed, which are exactly today's (version-0, unversioned) shape.
+        """
+        if stored_version is None:
+            return  # No format version info available - pre-versioning file.
+
+        if stored_version > OPENMODELS_FORMAT_VERSION:
+            warnings.warn(
+                f"This file was serialized with openmodels wire-format version "
+                f"{stored_version}, newer than the format version this installed openmodels "
+                f"understands ({OPENMODELS_FORMAT_VERSION}). Deserialization may fail or "
+                f"produce incorrect results - consider upgrading openmodels.",
                 UserWarning,
             )
 
@@ -1072,6 +1122,8 @@ class SklearnSerializer(
             "producer_version": sklearn.__version__,
             "producer_name": model.__module__.split(".")[0],
             "domain": "sklearn",
+            "openmodels_format_version": OPENMODELS_FORMAT_VERSION,
+            "openmodels_version": _openmodels_version(),
         }
 
         try:
@@ -1122,6 +1174,7 @@ class SklearnSerializer(
         """
         # Version control check
         self._check_version(data.get("producer_version"))
+        self._check_format_version(data.get("openmodels_format_version"))
 
         # Reset per-call scratch state used by _deserialize_cfnode/_resolve_birch_leaf_links.
         self._birch_pending_leaf_links = []

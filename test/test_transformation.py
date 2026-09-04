@@ -122,9 +122,12 @@ def test_transformer(Transformer, data):
         y = None
         x = ["This is a test document.", "Another document for testing.", "Yet another one."]
         x_sparse = None
-    if Transformer.__name__ == "LocalOutlierFactor":
-        # Set novelty=True to enable the predict method
-        args["novelty"] = True
+    if Transformer.__name__ == "PatchExtractor":
+        # PatchExtractor expects an (n_images, height, width) image batch, not 2D tabular data
+        y = None
+        x_sparse = None
+        rng = np.random.RandomState(0)
+        x = rng.rand(5, 10, 10)
     if Transformer.__name__ == "SkewedChi2Sampler":
         # Ensure X satisfies the condition X >= -skewedness
         skewedness = 0.5  # Default value for skewedness

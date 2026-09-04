@@ -57,6 +57,12 @@ test/temp/*.json
 .coverage.*
 CLAUDE.md
 .tox/
+
+# Stray output from manually running save()/README examples at the repo root #
+################################################################################
+/model.json
+/model.pkl
+/result.txt
 # Sphinx documentation build output #
 ##################################
 docs/_build/

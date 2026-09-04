@@ -1,12 +1,37 @@
-[tool.poetry]
+[project]
 name = "openmodels"
-version = "0.1.0-alpha.22"
+version = "0.1.0"
 description = "Export scikit-learn model files to JSON for sharing or deploying predictive models with peace of mind."
 authors = [
-    "Alejandro Gutierrez <a.gutierrez@g-npd.com>, Pau Cabaneros <pau.cabaneros@gmail.com>, Raúl Marín <hi@raulmarin.dev>",
+    { name = "Alejandro Gutierrez", email = "a.gutierrez@g-npd.com" },
+    { name = "Pau Cabaneros", email = "pau.cabaneros@gmail.com" },
+    { name = "Raúl Marín", email = "hi@raulmarin.dev" },
 ]
 license = "MIT"
 readme = "README.md"
+requires-python = ">=3.10,<4.0"
+keywords = ["scikit-learn", "serialization", "machine-learning", "json", "model-export", "mlops"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dynamic = ["dependencies"]
+
+[project.urls]
+Homepage = "https://gnpd.github.io/openmodels/"
+Repository = "https://github.com/Gnpd/openmodels"
+Documentation = "https://gnpd.github.io/openmodels/"
+Changelog = "https://github.com/Gnpd/openmodels/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Gnpd/openmodels/issues"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"

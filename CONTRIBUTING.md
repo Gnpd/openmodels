@@ -1,6 +1,6 @@
 # Contributing to OpenModels
 
-We appreciate your interest in contributing to OpenModels and welcome contributions from everyone. Whether you have bug reports, ideas for new features, or want to improve the code, your contributions are valuable. Check the [Project Board]() to see what we're working on.
+We appreciate your interest in contributing to OpenModels and welcome contributions from everyone. Whether you have bug reports, ideas for new features, or want to improve the code, your contributions are valuable. Check the [open issues](https://github.com/Gnpd/openmodels/issues) to see what we're working on.
 
 OpenModels is a project designed for production code, focusing on maintaining high-quality standards. Please adhere to the following guidelines when contributing:
 
@@ -55,9 +55,13 @@ task check # lint, format and type check
 task test
 ```
 
-## Codecov
+## Test Coverage
 
-Ensure your changes don't reduce OpenModels's test coverage. We use Codecov to track coverage.
+Ensure your changes don't reduce OpenModels's test coverage. Check locally with:
+
+```bash
+task test:cov
+```
 
 ## Documentation
 
@@ -65,4 +69,4 @@ Update OpenModels documentation if your changes affect the API or functionality.
 
 ## License
 
-By contributing to OpenModels, you agree that your contributions will be licensed under its [MIT license](link-to-license).
+By contributing to OpenModels, you agree that your contributions will be licensed under its [MIT license](https://github.com/Gnpd/openmodels/blob/main/LICENSE).

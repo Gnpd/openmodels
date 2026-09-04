@@ -118,7 +118,7 @@ class SerializationManager:
     def save(
         self,
         model: Any,
-        file_path: Union[str, Path, None] = None,
+        file_path: Union[str, Path],
         format_name: str = "json",
     ) -> None:
         """
@@ -128,9 +128,8 @@ class SerializationManager:
         ----------
         model : Any
             The machine learning model to serialize and save.
-        file_path : Union[str, Path, None]
-            The path to the file where the model will be saved. If None, the model will be saved to
-            a default filename of "model.{ext}", where "ext" is determined by the format (e.g., "json" or "pkl").
+        file_path : Union[str, Path]
+            The path to the file where the model will be saved.
         format_name : str, optional
             The target format (default is "json").
 
@@ -148,16 +147,6 @@ class SerializationManager:
         >>> manager.save(model, "model.json", format_name="json")
         """
         serialized_data = self.serialize(model, format_name)
-
-        # Determine file extension
-        ext = format_name
-        if format_name == "pickle":
-            ext = "pkl"
-        else:
-            ext = format_name
-
-        if file_path is None:
-            file_path = f"model.{ext}"
         file_path = Path(file_path)
 
         try:
