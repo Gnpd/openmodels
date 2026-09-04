@@ -17,6 +17,7 @@ tests against in .github/workflows/sklearn-compat.yml.
 """
 
 import pytest
+from sklearn.base import clone
 from sklearn.utils.discovery import all_estimators
 from sklearn.utils.estimator_checks import parametrize_with_checks
 
@@ -201,6 +202,32 @@ def _check_name(check) -> str:
     return getattr(check, "func", check).__name__
 
 
+# Per-(estimator class name, check function name) constructor param overrides, applied only to
+# the clone handed to that one check - the shared instance in ESTIMATORS (and every other check
+# run against it) keeps its normal construct()-derived params. Unlike KNOWN_ROUNDTRIP_XFAILS
+# (which documents a gap that can't be closed), this documents a genuine fix: a different param
+# choice makes the check pass reliably, but can't become that estimator's global default because
+# other checks in this same battery fit on much smaller synthetic data that param choice would
+# break instead (see the SpectralEmbedding entry below for a concrete case).
+PER_CHECK_CONSTRUCTOR_OVERRIDES: dict = {
+    ("SpectralEmbedding", "check_pipeline_consistency"): {
+        # check_pipeline_consistency's synthetic data is two tight 15-point clusters. With
+        # SpectralEmbedding's default n_neighbors (~n_samples/10 = 3), the k-NN affinity graph
+        # never bridges the two clusters, so the graph Laplacian's zero eigenvalue has
+        # multiplicity 2 - a genuinely degenerate eigenspace, not just an ill-conditioned one.
+        # ARPACK's choice of basis within that degenerate subspace is arbitrary and can differ
+        # between two otherwise-identical fits depending on platform floating-point rounding,
+        # which is what made this check flake in CI (never locally - verified by direct
+        # experimentation, unrelated to openmodels round-tripping or to BLAS thread count).
+        # n_neighbors=20 bridges the clusters so the graph is connected and the embedding is
+        # actually unique. Can't be SpectralEmbedding's default construct() args: several other
+        # checks in this battery fit it on datasets as small as 10 samples, where n_neighbors=20
+        # raises "Expected n_neighbors <= n_samples_fit" (confirmed by trying it globally first).
+        "n_neighbors": 20
+    },
+}
+
+
 @parametrize_with_checks(ESTIMATORS)
 def test_estimator_conformance_roundtrip(estimator, check, request):
     name = _check_name(check)
@@ -212,6 +239,10 @@ def test_estimator_conformance_roundtrip(estimator, check, request):
     # bug would keep reporting XFAIL forever and nobody would be prompted to clean up the entry.
     if reason is not None:
         request.applymarker(pytest.mark.xfail(reason=reason, strict=True))
+
+    overrides = PER_CHECK_CONSTRUCTOR_OVERRIDES.get((type(estimator).__name__, name))
+    if overrides is not None:
+        estimator = clone(estimator).set_params(**overrides)
 
     with roundtrip_fit(type(estimator)):
         check(estimator)
