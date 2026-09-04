@@ -17,6 +17,7 @@ tests against in .github/workflows/sklearn-compat.yml.
 """
 
 import pytest
+import sklearn
 from sklearn.base import clone
 from sklearn.utils.discovery import all_estimators
 from sklearn.utils.estimator_checks import parametrize_with_checks
@@ -32,6 +33,10 @@ ESTIMATOR_CLASSES = [
 ]
 
 ESTIMATORS = [construct(cls) for cls in ESTIMATOR_CLASSES]
+
+# (major, minor) of the installed scikit-learn - used only by KNOWN_ROUNDTRIP_VERSION_XFAILS
+# below, for gaps that are fixed upstream as of a specific version rather than permanent.
+_SKLEARN_VERSION = tuple(int(p) for p in sklearn.__version__.split(".")[:2])
 
 
 def _entries(reason: str, estimator_checks: dict) -> dict:
@@ -175,6 +180,25 @@ KNOWN_ROUNDTRIP_XFAILS.update(
     )
 )
 
+# Same floating-point non-associativity as _SAMPLE_WEIGHT_EQUIVALENCE_REASON above, but only
+# below scikit-learn 1.7 and only on the dense variant of the check (verified directly -
+# installed scikit-learn==1.6.1 and confirmed both fail identically against a bare, unpatched
+# estimator with roundtrip_fit disabled; the sparse variant passes cleanly there, and both
+# variants pass cleanly on 1.7+). Kept out of KNOWN_ROUNDTRIP_XFAILS/strict=True: since this is
+# genuinely fixed upstream from 1.7 onward, an unconditional strict entry would XPASS on every
+# newer scikit-learn version this repo tests against - see KNOWN_ROUNDTRIP_VERSION_XFAILS below,
+# which only applies below the given scikit-learn version.
+KNOWN_ROUNDTRIP_VERSION_XFAILS: dict = {
+    ("BayesianRidge", "check_sample_weight_equivalence_on_dense_data"): (
+        _SAMPLE_WEIGHT_EQUIVALENCE_REASON,
+        (1, 7),
+    ),
+    ("KBinsDiscretizer", "check_sample_weight_equivalence_on_dense_data"): (
+        _SAMPLE_WEIGHT_EQUIVALENCE_REASON,
+        (1, 7),
+    ),
+}
+
 # Pre-existing sklearn fragility, unrelated to serialization: fails identically against a bare,
 # unpatched estimator (verified directly, roundtrip_fit disabled). On check_estimator's tiny
 # synthetic data, some solvers report n_iter_=None, or the estimator does zero iterations (e.g.
@@ -231,7 +255,15 @@ PER_CHECK_CONSTRUCTOR_OVERRIDES: dict = {
 @parametrize_with_checks(ESTIMATORS)
 def test_estimator_conformance_roundtrip(estimator, check, request):
     name = _check_name(check)
-    reason = KNOWN_ROUNDTRIP_XFAILS.get((type(estimator).__name__, name))
+    key = (type(estimator).__name__, name)
+    reason = KNOWN_ROUNDTRIP_XFAILS.get(key)
+
+    if reason is None:
+        version_entry = KNOWN_ROUNDTRIP_VERSION_XFAILS.get(key)
+        if version_entry is not None:
+            version_reason, max_version = version_entry
+            if _SKLEARN_VERSION < max_version:
+                reason = version_reason
 
     # Applied dynamically (rather than pytest.xfail(), which would abort here without ever
     # running the check) so that strict=True can catch the check actually starting to pass -
