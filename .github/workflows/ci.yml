@@ -34,6 +34,16 @@ jobs:
     strategy:
       matrix:
         python-version: ${{ fromJson(needs.setup.outputs.matrix) }}
+    env:
+      # Pin BLAS/LAPACK to a single thread so numerical routines (e.g. ARPACK eigensolvers
+      # used by SpectralEmbedding) are bit-reproducible across runs. Without this,
+      # multi-threaded OpenBLAS can nondeterministically reorder floating-point reductions,
+      # which for near-degenerate eigenvalues can flip which eigenvector converges into which
+      # slot - causing rare, environment-dependent CI flakes unrelated to serialization.
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
 
     steps:
       - uses: actions/checkout@v6
