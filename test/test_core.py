@@ -40,6 +40,28 @@ def test_save_and_load_logistic_regression_pickle(tmp_path):
     assert np.array_equal(model.predict(X), loaded_model.predict(X))
 
 
+def test_save_and_load_logistic_regression_msgpack(tmp_path):
+    model, X = get_fitted_model()
+    manager = SerializationManager(SklearnSerializer())
+    file_path = tmp_path / "model.msgpack"
+    manager.save(model, file_path, format_name="msgpack")
+    assert file_path.exists()
+    loaded_model = manager.load(file_path, format_name="msgpack")
+    assert hasattr(loaded_model, "predict")
+    assert np.array_equal(model.predict(X), loaded_model.predict(X))
+
+
+def test_save_and_load_logistic_regression_yaml(tmp_path):
+    model, X = get_fitted_model()
+    manager = SerializationManager(SklearnSerializer())
+    file_path = tmp_path / "model.yaml"
+    manager.save(model, file_path, format_name="yaml")
+    assert file_path.exists()
+    loaded_model = manager.load(file_path, format_name="yaml")
+    assert hasattr(loaded_model, "predict")
+    assert np.array_equal(model.predict(X), loaded_model.predict(X))
+
+
 def test_save_requires_file_path():
     model, _ = get_fitted_model()
     manager = SerializationManager(SklearnSerializer())

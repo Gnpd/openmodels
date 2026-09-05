@@ -213,10 +213,10 @@ class SerializationManager:
         >>> loaded_model = manager.load("model.json", format_name="json")
         """
         file_path = Path(file_path)
-        # Determine read mode based on format
+        converter = FormatRegistry.get_converter(format_name)
         try:
             serialized_data: Union[str, bytes]
-            if format_name == "pickle":
+            if converter.is_binary:
                 with open(file_path, "rb") as f:
                     serialized_data = f.read()
             else:

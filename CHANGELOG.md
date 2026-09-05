@@ -26,6 +26,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`numpy`/`scipy` versions at serialize time), and `producers` (`{package: version}` for every
   package contributing an estimator class anywhere in the tree, not just the outermost one - e.g.
   both `sklearn` and a registered third-party package for a mixed `Pipeline`)
+- Two new format converters, sharing the exact same serialized dict every other format
+  already used: `MsgpackConverter` (`format_name="msgpack"`) - a binary format with the same
+  safe, no-code-execution data model as JSON, for large models where JSON's text encoding is
+  too slow or too large - and `YAMLConverter` (`format_name="yaml"`) - for hand-editing or
+  diffing a model's `metadata` cleanly, using only `yaml.safe_load`/`safe_dump`. Both require
+  an optional extra (`pip install openmodels[msgpack]` / `openmodels[yaml]`) and raise a clear
+  `ImportError` naming that extra if it isn't installed, rather than failing to import
+  `openmodels` itself
+- `FormatConverter` protocol gained a required `is_binary` class attribute, so
+  `SerializationManager.load()` picks the right file open mode (text/binary) by asking the
+  registered converter instead of hardcoding `format_name == "pickle"` - a latent bug that
+  would have made any *other* binary format (like the new MessagePack one) unreadable via
+  `load()`
 
 ## [0.1.0] - 2026-09-04
 

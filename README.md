@@ -19,6 +19,14 @@ OpenModels is a flexible and extensible library for serializing and deserializin
 pip install openmodels
 ```
 
+JSON and Pickle work out of the box. The MessagePack and YAML formats need their (optional)
+underlying library:
+
+```bash
+pip install openmodels[msgpack]  # format_name="msgpack"
+pip install openmodels[yaml]     # format_name="yaml"
+```
+
 ## Quick Start
 
 ```python
@@ -62,26 +70,30 @@ OpenModels is designed to be easily extended with new serialization formats and 
 
 ### Adding a New Format
 
-To add a new serialization format, create a class that implements the `FormatConverter` protocol and register it with the `FormatRegistry`:
+To add a new serialization format, create a class that implements the `FormatConverter` protocol and register it with the `FormatRegistry`. `is_binary` tells `SerializationManager.load()` whether to open a saved file in binary or text mode:
 
 ```python
 from openmodels.protocols import FormatConverter
 from openmodels.format_registry import FormatRegistry
 from typing import Dict, Any
 
-class YAMLConverter(FormatConverter):
+class TOMLConverter(FormatConverter):
+    is_binary = False
+
     @staticmethod
     def serialize_to_format(data: Dict[str, Any]) -> str:
-        import yaml
-        return yaml.dump(data)
+        import toml
+        return toml.dumps(data)
 
     @staticmethod
     def deserialize_from_format(formatted_data: str) -> Dict[str, Any]:
-        import yaml
-        return yaml.safe_load(formatted_data)
+        import toml
+        return toml.loads(formatted_data)
 
-FormatRegistry.register("yaml", YAMLConverter)
+FormatRegistry.register("toml", TOMLConverter)
 ```
+
+JSON, Pickle, MessagePack, and YAML already ship built-in this way - see `openmodels/converters/` for their real implementations, including how the optional `msgpack`/`PyYAML` dependencies are imported lazily so they're only required if you actually use those formats.
 
 ### Adding a New Model Serializer
 
@@ -217,9 +229,10 @@ To run the tests:
 
 ## Security
 
-OpenModels's JSON format is plain data and safe to load from untrusted sources. The
-optional Pickle format is not: like any pickle-based tool, deserializing it can execute
-arbitrary code, so only load pickle files from sources you trust. See
+OpenModels's JSON, MessagePack, and YAML formats are all safe to load from untrusted
+sources (YAML because OpenModels always uses `yaml.safe_load`/`safe_dump`). The optional
+Pickle format is not: like any pickle-based tool, deserializing it can execute arbitrary
+code, so only load pickle files from sources you trust. See
 [SECURITY.md](https://github.com/Gnpd/openmodels/blob/main/SECURITY.md) for details and
 how to report a vulnerability.
 

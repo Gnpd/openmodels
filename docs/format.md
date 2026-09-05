@@ -1,9 +1,11 @@
 # Serialized Model Format
 
 `SerializationManager.serialize()`/`SklearnSerializer.serialize()` produce a plain Python
-`dict` (JSON-serializable by default via `JSONConverter`, or pickled via `PickleConverter` -
-see [Security](https://github.com/Gnpd/openmodels/blob/main/SECURITY.md) for why JSON is
-generally the safer choice). This page documents that dict's shape.
+`dict`. This page documents that dict's shape - every `FormatConverter` (`JSONConverter`,
+`PickleConverter`, `MsgpackConverter`, `YAMLConverter`) encodes the exact same dict, just in a
+different wire encoding (`format_name="json"`/`"pickle"`/`"msgpack"`/`"yaml"`); see
+[Security](https://github.com/Gnpd/openmodels/blob/main/SECURITY.md) for each format's trust
+requirements, and `README.md`'s Security section for the short version.
 
 ## Top-level fields
 

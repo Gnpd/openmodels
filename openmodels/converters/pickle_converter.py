@@ -27,6 +27,8 @@ class PickleConverter(FormatConverter):
         sources you trust.
     """
 
+    is_binary = True
+
     @staticmethod
     def serialize_to_format(data: Dict[str, Any]) -> bytes:
         """
