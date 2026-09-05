@@ -32,5 +32,13 @@ OpenModels ships two output formats with very different trust requirements:
   `SerializationManager.deserialize(..., format_name="pickle")` on a file received from an
   untrusted or unauthenticated source.
 
+  Note that this isn't `pickle.dumps()`/`joblib.dump()` on the fitted estimator itself -
+  OpenModels always converts the model to the same plain dict documented in
+  `docs/format.md` first (the one `estimator_class`/`params`/`attributes`/`metadata` shape
+  the JSON format also uses), and only then hands that dict to `pickle.dumps()`. Choosing
+  the pickle format changes how that dict is encoded on disk, not what gets serialized -
+  the arbitrary-code-execution risk comes entirely from calling `pickle.loads()` at all,
+  regardless of how harmless the encoded content happens to be.
+
 If you don't have a specific reason to use the pickle format, prefer JSON — it's the
 default, it's human-readable, and it doesn't carry this risk.
