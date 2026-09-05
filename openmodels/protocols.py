@@ -6,7 +6,7 @@ format converters must implement to be compatible with the SerializationManager.
 """
 
 from abc import abstractmethod
-from typing import Any, Dict, Protocol
+from typing import Any, ClassVar, Dict, Protocol
 
 
 class ModelSerializer(Protocol):
@@ -47,6 +47,11 @@ class ModelSerializer(Protocol):
 
 class FormatConverter(Protocol):
     """Protocol for format converters."""
+
+    #: Whether `serialize_to_format` returns `bytes` (and a file for this format must
+    #: therefore be opened in binary mode) rather than `str`. `SerializationManager.load`
+    #: reads this to pick the right file mode instead of hardcoding format names.
+    is_binary: ClassVar[bool]
 
     @staticmethod
     @abstractmethod

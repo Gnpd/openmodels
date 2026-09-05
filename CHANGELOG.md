@@ -5,6 +5,41 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-05
+
+### Changed
+
+- **Breaking (wire format):** `producer_version`, `producer_name`, `domain`,
+  `openmodels_format_version`, and `openmodels_version` moved from flat top-level keys into a
+  single `metadata` dict, present exactly once at the root of the serialized dict instead of
+  being duplicated on every nested/composite sub-estimator (a `Pipeline` step, a
+  `VotingClassifier`'s `estimators`, ...). `openmodels_format_version` is now `2`; files written
+  with the old flat shape (version `1`) still deserialize correctly. See `docs/format.md`
+
+### Added
+
+- `SerializationManager.serialize()`/`.save()` now accept an optional `metadata` dict, merged
+  into the serialized model's root-level `metadata` object - e.g. `title`, `description`,
+  `author: {name, email}`, `license`, or free-form `metrics` - without overriding the autofilled
+  producer/format fields
+- New autofilled `metadata` fields: `created_at` (ISO 8601 UTC timestamp), `dependency_versions`
+  (`numpy`/`scipy` versions at serialize time), and `producers` (`{package: version}` for every
+  package contributing an estimator class anywhere in the tree, not just the outermost one - e.g.
+  both `sklearn` and a registered third-party package for a mixed `Pipeline`)
+- Two new format converters, sharing the exact same serialized dict every other format
+  already used: `MsgpackConverter` (`format_name="msgpack"`) - a binary format with the same
+  safe, no-code-execution data model as JSON, for large models where JSON's text encoding is
+  too slow or too large - and `YAMLConverter` (`format_name="yaml"`) - for hand-editing or
+  diffing a model's `metadata` cleanly, using only `yaml.safe_load`/`safe_dump`. Both require
+  an optional extra (`pip install openmodels[msgpack]` / `openmodels[yaml]`) and raise a clear
+  `ImportError` naming that extra if it isn't installed, rather than failing to import
+  `openmodels` itself
+- `FormatConverter` protocol gained a required `is_binary` class attribute, so
+  `SerializationManager.load()` picks the right file open mode (text/binary) by asking the
+  registered converter instead of hardcoding `format_name == "pickle"` - a latent bug that
+  would have made any *other* binary format (like the new MessagePack one) unreadable via
+  `load()`
+
 ## [0.1.0] - 2026-09-04
 
 First beta. Per [Semantic Versioning](https://semver.org/spec/v2.0.0.html), any `0.y.z`

@@ -18,6 +18,8 @@ class JSONConverter(FormatConverter):
     representations and JSON strings.
     """
 
+    is_binary = False
+
     @staticmethod
     def serialize_to_format(data: Dict[str, Any]) -> str:
         """

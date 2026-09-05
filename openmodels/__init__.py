@@ -8,7 +8,8 @@ through a plugin-based system.
 Main components:
 - SerializationManager: Coordinates the serialization and deserialization process.
 - SklearnSerializer: Handles serialization for scikit-learn models.
-- JSONConverter, PickleConverter: Convert between dict and specific formats.
+- JSONConverter, PickleConverter, MsgpackConverter, YAMLConverter: Convert between dict and
+  specific formats.
 - FormatRegistry: Manages available format converters.
 
 Example usage:
@@ -36,12 +37,16 @@ For more advanced usage and custom serializers or converters, refer to the docum
 
 from .core import SerializationManager
 from .serializers import SklearnSerializer
-from .converters import JSONConverter, PickleConverter
+from .converters import JSONConverter, PickleConverter, MsgpackConverter, YAMLConverter
 from .format_registry import FormatRegistry
 
-# Register the JSONConverter
+# Register the built-in format converters. MsgpackConverter/YAMLConverter only import their
+# underlying library lazily, inside each method - so registering them here doesn't require
+# 'msgpack'/'PyYAML' to be installed; only actually using format_name="msgpack"/"yaml" does.
 FormatRegistry.register("json", JSONConverter)
 FormatRegistry.register("pickle", PickleConverter)
+FormatRegistry.register("msgpack", MsgpackConverter)
+FormatRegistry.register("yaml", YAMLConverter)
 
 __all__ = [
     "FormatRegistry",
