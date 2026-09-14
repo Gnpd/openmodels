@@ -3,7 +3,7 @@
 project = "OpenModels"
 copyright = "2026, Alejandro Gutierrez and Raúl Marín"
 author = "Alejandro Gutierrez, Raúl Marín"
-release = "0.1.0"
+release = "0.2.0"
 html_title = "OpenModels"
 html_short_title = "OpenModels"
 

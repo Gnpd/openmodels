@@ -1,6 +1,6 @@
 [project]
 name = "openmodels"
-version = "0.1.0"
+version = "0.2.0"
 description = "Export scikit-learn model files to JSON for sharing or deploying predictive models with peace of mind."
 authors = [
     { name = "Alejandro Gutierrez", email = "a.gutierrez@g-npd.com" },
@@ -26,6 +26,10 @@ classifiers = [
 ]
 dynamic = ["dependencies"]
 
+[project.optional-dependencies]
+msgpack = ["msgpack (>=1.0,<2.0)"]
+yaml = ["PyYAML (>=6.0,<7.0)"]
+
 [project.urls]
 Homepage = "https://gnpd.github.io/openmodels/"
 Repository = "https://github.com/Gnpd/openmodels"
@@ -36,6 +40,8 @@ Issues = "https://github.com/Gnpd/openmodels/issues"
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
 scikit-learn = "^1.6.0"
+msgpack = {version = "^1.0", optional = true}
+PyYAML = {version = "^6.0", optional = true}
 
 [tool.poetry.group.dev.dependencies]
 poetry-types = "^0.6.2"
@@ -45,6 +51,8 @@ pre-commit = "^3.7.1"
 black = "^26.3.1"
 flake8 = "^7.1.1"
 pytest-cov = "^7.0.0"
+msgpack = "^1.0"
+PyYAML = "^6.0"
 
 [tool.poetry.group.docs]
 optional = true
@@ -61,4 +69,8 @@ build-backend = "poetry.core.masonry.api"
 
 [[tool.mypy.overrides]]
 module = ["sklearn", "sklearn.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["msgpack", "yaml"]
 ignore_missing_imports = true

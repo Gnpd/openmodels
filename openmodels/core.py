@@ -5,7 +5,7 @@ This module contains the SerializationManager class, which is the main interface
 for serializing and deserializing machine learning models using various formats.
 """
 
-from typing import Any, Union
+from typing import Any, Dict, Optional, Union
 from pathlib import Path
 from .protocols import ModelSerializer
 from .format_registry import FormatRegistry
@@ -36,7 +36,12 @@ class SerializationManager:
         """
         self.model_serializer = model_serializer
 
-    def serialize(self, model: Any, format_name: str = "json") -> Any:
+    def serialize(
+        self,
+        model: Any,
+        format_name: str = "json",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """
         Serialize a model to the specified format.
 
@@ -46,6 +51,11 @@ class SerializationManager:
             The machine learning model to serialize.
         format_name : str, optional
             The target format (default is "json").
+        metadata : dict, optional
+            Optional user-supplied metadata (e.g. ``title``, ``description``, ``author``)
+            merged into the serialized dict's root-level ``metadata`` object. Autofilled
+            fields from the model serializer (e.g. ``producer_version``) always take
+            precedence over a colliding key here.
 
         Returns
         -------
@@ -65,6 +75,9 @@ class SerializationManager:
         >>> manager = SerializationManager(SklearnSerializer())
         >>> model = LogisticRegression()
         >>> serialized_model = manager.serialize(model, format_name="json")
+        >>> serialized_model = manager.serialize(
+        ...     model, format_name="json", metadata={"title": "My model"}
+        ... )
         """
         converter = FormatRegistry.get_converter(format_name)
         serialized_dict = self.model_serializer.serialize(model)
@@ -72,6 +85,11 @@ class SerializationManager:
             raise SerializationError(
                 f"Model serializer must return a dict, got {type(serialized_dict)}"
             )
+        if metadata:
+            serialized_dict["metadata"] = {
+                **metadata,
+                **serialized_dict.get("metadata", {}),
+            }
         return converter.serialize_to_format(serialized_dict)
 
     def deserialize(self, serialized_model: Any, format_name: str = "json") -> Any:
@@ -120,6 +138,7 @@ class SerializationManager:
         model: Any,
         file_path: Union[str, Path],
         format_name: str = "json",
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Save a model to a file in the specified format.
@@ -132,6 +151,10 @@ class SerializationManager:
             The path to the file where the model will be saved.
         format_name : str, optional
             The target format (default is "json").
+        metadata : dict, optional
+            Optional user-supplied metadata (e.g. ``title``, ``description``, ``author``)
+            merged into the serialized dict's root-level ``metadata`` object. See
+            `serialize`.
 
         Raises
         ------
@@ -146,7 +169,7 @@ class SerializationManager:
         >>> model = LogisticRegression()
         >>> manager.save(model, "model.json", format_name="json")
         """
-        serialized_data = self.serialize(model, format_name)
+        serialized_data = self.serialize(model, format_name, metadata=metadata)
         file_path = Path(file_path)
 
         try:
@@ -190,10 +213,10 @@ class SerializationManager:
         >>> loaded_model = manager.load("model.json", format_name="json")
         """
         file_path = Path(file_path)
-        # Determine read mode based on format
+        converter = FormatRegistry.get_converter(format_name)
         try:
             serialized_data: Union[str, bytes]
-            if format_name == "pickle":
+            if converter.is_binary:
                 with open(file_path, "rb") as f:
                     serialized_data = f.read()
             else:

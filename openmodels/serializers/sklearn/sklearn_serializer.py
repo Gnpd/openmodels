@@ -5,9 +5,12 @@ This module provides a serializer for scikit-learn models, allowing them to be
 converted to and from dictionary representations.
 """
 
-from typing import Any, Callable, Dict, List, Tuple, Type, Optional, Union
+from typing import Any, Callable, Dict, List, Set, Tuple, Type, Optional, Union
 from importlib.metadata import version as _package_version, PackageNotFoundError
+from datetime import datetime, timezone
+import sys
 import numpy as np
+import scipy  # type: ignore
 import inspect
 from scipy.sparse import issparse  # type: ignore
 
@@ -89,7 +92,10 @@ TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0"]
 # Version of openmodels's own wire format (the shape of the serialized dict), independent of
 # scikit-learn's version (producer_version) and of openmodels's own release version
 # (openmodels_version, informational only). Bump this only when the structure itself changes.
-OPENMODELS_FORMAT_VERSION = 1
+# v2: producer_version/producer_name/domain/openmodels_format_version/openmodels_version moved
+# from flat top-level keys into a single nested "metadata" dict, present once at the true root
+# (not duplicated on every nested/composite sub-estimator as in v1).
+OPENMODELS_FORMAT_VERSION = 2
 
 
 def _openmodels_version() -> str:
@@ -522,7 +528,7 @@ class SklearnSerializer(
     def _get_serializer_handlers(self):
         # important to run before super() to deal with possible np.ndarray of estimators
         return [
-            (BaseEstimator, self.serialize),
+            (BaseEstimator, self._serialize_core),
             (BaseLoss, self._serialize_loss),
             (KDTree, self._serialize_kdtree),
             (Kernel, self._serialize_kernel),
@@ -543,7 +549,8 @@ class SklearnSerializer(
         ]
         # Estimators
         estimator_handlers = [
-            (est_name, self.deserialize) for est_name in self._all_estimators.keys()
+            (est_name, self._deserialize_core)
+            for est_name in self._all_estimators.keys()
         ]
 
         kernel_handlers = [
@@ -611,7 +618,7 @@ class SklearnSerializer(
     def _deserialize_calibrated_classifier(
         self, data: Dict[str, Any]
     ) -> _CalibratedClassifier:
-        estimator = self.deserialize(data["estimator"])
+        estimator = self._deserialize_core(data["estimator"])
         calibrators = [self.deserialize(c) for c in data["calibrators"]]
         classes = np.array(data["classes"])
         method = data["method"]
@@ -765,7 +772,7 @@ class SklearnSerializer(
 
         return root
 
-    def _resolve_birch_leaf_links(self, model: BaseEstimator) -> None:
+    def _resolve_birch_leaf_links(self) -> None:
         """
         Cross-link the two independently-deserialized Birch._CFNode graphs (root_ and
         dummy_leaf_): dummy_leaf_.next_leaf_ always points at the current globally-leftmost
@@ -978,7 +985,7 @@ class SklearnSerializer(
                     arr.append(
                         [
                             (
-                                self.deserialize(est)
+                                self._deserialize_core(est)
                                 if isinstance(est, dict) and "estimator_class" in est
                                 else est
                             )
@@ -990,7 +997,7 @@ class SklearnSerializer(
                 # Flat list
                 return [
                     (
-                        self.deserialize(est)
+                        self._deserialize_core(est)
                         if isinstance(est, dict) and "estimator_class" in est
                         else est
                     )
@@ -1078,12 +1085,100 @@ class SklearnSerializer(
                 "Cannot deserialize custom/non-standard _CurveScorer functions."
             )
 
+    def _serialize_core(self, model: BaseEstimator) -> Dict[str, Any]:
+        """
+        Serialize a scikit-learn estimator to a dictionary, without the root-only
+        "metadata" block (see `serialize`). This is the method used for every
+        recursive/nested estimator (a `Pipeline` step, a `VotingClassifier`'s
+        `estimators_`, ...) so that "metadata" is never duplicated below the true root.
+
+        Parameters
+        ----------
+        model : BaseEstimator
+            The scikit-learn estimator to serialize.
+
+        Returns
+        -------
+        Dict[str, Any]
+            A dictionary representation of the model.
+        """
+        # Extract and build estimator params and its types/dtypes map
+        params = model.get_params(deep=False)
+        param_types, param_dtypes = self._get_type_maps(params)
+
+        # Build serializable estimator including extra info
+        serialized_estimator = {
+            "estimator_class": model.__class__.__name__,
+            "params": self.convert_to_serializable(params),
+            "param_types": param_types,
+            "param_dtypes": param_dtypes,
+        }
+
+        try:
+            check_is_fitted(model)
+        except NotFittedError:
+            return serialized_estimator
+
+        # Extract and build fitted attributes and its types/dtypes map
+        attributes = self._extract_estimator_attributes(model)
+        attribute_types, attribute_dtypes = self._get_type_maps(attributes)
+
+        serializable_attributes = self.convert_to_serializable(attributes)
+
+        return {
+            **serialized_estimator,
+            "attributes": serializable_attributes,
+            "attribute_types": attribute_types,
+            "attribute_dtypes": attribute_dtypes,
+        }
+
+    @staticmethod
+    def _resolve_package_version(name: str) -> str:
+        """
+        Best-effort version lookup for a top-level package name (e.g. "sklearn",
+        "chemotools"). Prefers the already-imported module's own `__version__` attribute -
+        the only option for a package like scikit-learn, whose import name ("sklearn")
+        differs from its distribution name ("scikit-learn"), so it has no
+        `importlib.metadata` entry under "sklearn" - falling back to package metadata for
+        packages where the import name does match the distribution name. Returns "unknown"
+        if neither resolves, mirroring `_openmodels_version`'s own fallback.
+        """
+        module = sys.modules.get(name)
+        version = getattr(module, "__version__", None)
+        if version:
+            return str(version)
+        try:
+            return _package_version(name)
+        except PackageNotFoundError:
+            return "unknown"
+
+    def _collect_producer_names(self, serialized: Any, names: Set[str]) -> None:
+        """
+        Recursively walk an already-serialized estimator dict (params/attributes, however
+        deeply nested) and collect the top-level package name of every estimator class found
+        in it, via the same class registry used to deserialize them - this is what lets a
+        composite estimator mixing packages (e.g. a scikit-learn `Pipeline` with a
+        third-party step) report every package involved, not just the outermost one.
+        """
+        if isinstance(serialized, dict):
+            estimator_class = serialized.get("estimator_class")
+            if estimator_class is not None:
+                cls = self._all_estimators.get(estimator_class)
+                if cls is not None:
+                    names.add(cls.__module__.split(".")[0])
+            for value in serialized.values():
+                self._collect_producer_names(value, names)
+        elif isinstance(serialized, (list, tuple)):
+            for item in serialized:
+                self._collect_producer_names(item, names)
+
     def serialize(self, model: BaseEstimator) -> Dict[str, Any]:
         """
         Serialize a scikit-learn estimator to a dictionary.
 
         This method extracts relevant attributes from the model, converts them to
-        JSON-serializable types, and returns a dictionary representation of the model.
+        JSON-serializable types, and returns a dictionary representation of the model,
+        with a "metadata" block (producer/format bookkeeping) attached at the root.
 
         Parameters
         ----------
@@ -1109,40 +1204,28 @@ class SklearnSerializer(
         >>> serializer = SklearnSerializer()
         >>> serialized_dict = serializer.serialize(model)
         """
-        # Extract and build estimator params and its types/dtypes map
-        params = model.get_params(deep=False)
-        param_types, param_dtypes = self._get_type_maps(params)
+        serialized_estimator = self._serialize_core(model)
 
-        # Build serializable estimator including extra info
-        serialized_estimator = {
-            "estimator_class": model.__class__.__name__,
-            "params": self.convert_to_serializable(params),
-            "param_types": param_types,
-            "param_dtypes": param_dtypes,
+        producer_names: Set[str] = set()
+        self._collect_producer_names(serialized_estimator, producer_names)
+        producers = {
+            name: self._resolve_package_version(name) for name in sorted(producer_names)
+        }
+
+        metadata = {
             "producer_version": sklearn.__version__,
             "producer_name": model.__module__.split(".")[0],
+            "producers": producers,
             "domain": "sklearn",
             "openmodels_format_version": OPENMODELS_FORMAT_VERSION,
             "openmodels_version": _openmodels_version(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "dependency_versions": {
+                "numpy": np.__version__,
+                "scipy": scipy.__version__,
+            },
         }
-
-        try:
-            check_is_fitted(model)
-        except NotFittedError:
-            return serialized_estimator
-
-        # Extract and build fitted attributes and its types/dtypes map
-        attributes = self._extract_estimator_attributes(model)
-        attribute_types, attribute_dtypes = self._get_type_maps(attributes)
-
-        serializable_attributes = self.convert_to_serializable(attributes)
-
-        return {
-            **serialized_estimator,
-            "attributes": serializable_attributes,
-            "attribute_types": attribute_types,
-            "attribute_dtypes": attribute_dtypes,
-        }
+        return {**serialized_estimator, "metadata": metadata}
 
     def deserialize(self, data: Dict[str, Any]) -> BaseEstimator:
         """
@@ -1172,10 +1255,20 @@ class SklearnSerializer(
         >>> deserialized_model = serializer.deserialize(serialized_dict)
         >>> predictions = deserialized_model.predict(X_test)
         """
-        # Version control check
-        self._check_version(data.get("producer_version"))
-        self._check_format_version(data.get("openmodels_format_version"))
+        # Version control check. `data` itself is the fallback for pre-v2 files, which have
+        # no nested "metadata" key and carried these fields flat at the top level instead.
+        metadata = data.get("metadata", data)
+        self._check_version(metadata.get("producer_version"))
+        self._check_format_version(metadata.get("openmodels_format_version"))
 
+        return self._deserialize_core(data)
+
+    def _deserialize_core(self, data: Dict[str, Any]) -> BaseEstimator:
+        """
+        Reconstruct a scikit-learn estimator from its dictionary representation, without
+        reading the root-only "metadata" block (see `deserialize`). This is the method used
+        for every recursive/nested estimator dict.
+        """
         # Reset per-call scratch state used by _deserialize_cfnode/_resolve_birch_leaf_links.
         self._birch_pending_leaf_links = []
 
@@ -1243,6 +1336,6 @@ class SklearnSerializer(
             )
 
         if estimator_class == "Birch" and self._birch_pending_leaf_links:
-            self._resolve_birch_leaf_links(model)
+            self._resolve_birch_leaf_links()
 
         return model
