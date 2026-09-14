@@ -1,6 +1,6 @@
 # OpenModels
 
-[![PyPI version](https://badge.fury.io/py/openmodels.svg?cacheBust=2)](https://badge.fury.io/py/openmodels)
+[![PyPI version](https://badge.fury.io/py/openmodels.svg?cacheBust=1)](https://badge.fury.io/py/openmodels)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Versions](https://img.shields.io/pypi/pyversions/openmodels.svg?cacheBust=1)](https://pypi.org/project/openmodels/)
 
