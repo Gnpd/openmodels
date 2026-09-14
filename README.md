@@ -1,6 +1,6 @@
 # OpenModels
 
-[![PyPI version](https://badge.fury.io/py/openmodels.svg?cacheBust=1)](https://badge.fury.io/py/openmodels)
+[![PyPI version](https://badge.fury.io/py/openmodels.svg?cacheBust=2)](https://badge.fury.io/py/openmodels)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python Versions](https://img.shields.io/pypi/pyversions/openmodels.svg?cacheBust=1)](https://pypi.org/project/openmodels/)
 
@@ -192,7 +192,7 @@ OpenModels is tested against the following scikit-learn versions via the on-dema
 | 1.6.1 | ✅ Tested |
 | 1.7.2 | ✅ Tested |
 | 1.8.0 | ✅ Tested |
-| 1.9.0 | ✅ Tested |
+| 1.9.1 | ✅ Tested |
 
 If you encounter any incompatibility or a use case where the library does not work correctly with your version of scikit-learn, please [open an issue](https://github.com/Gnpd/openmodels/issues/new) — we would greatly appreciate your feedback!
 
