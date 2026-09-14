@@ -5,6 +5,15 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-09-14
+
+### Fixed
+
+- `TESTED_VERSIONS` in `sklearn_serializer.py` was missing scikit-learn 1.9.1, which had
+  already been added to the README compatibility matrix and CI workflow in 0.2.0. This caused
+  `SklearnSerializer` to emit a spurious "untested version" warning under scikit-learn 1.9.1
+  despite it being fully tested and supported.
+
 ## [0.2.0] - 2026-09-14
 
 ### Changed

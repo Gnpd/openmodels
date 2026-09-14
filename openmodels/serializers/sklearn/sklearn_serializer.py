@@ -87,7 +87,7 @@ ALL_ESTIMATORS["_BinaryGaussianProcessClassifierLaplace"] = (
 )
 ALL_ESTIMATORS["_ConstantPredictor"] = _ConstantPredictor
 
-TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0"]
+TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0", "1.9.1"]
 
 # Version of openmodels's own wire format (the shape of the serialized dict), independent of
 # scikit-learn's version (producer_version) and of openmodels's own release version

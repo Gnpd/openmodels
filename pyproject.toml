@@ -1,6 +1,6 @@
 [project]
 name = "openmodels"
-version = "0.2.0"
+version = "0.2.1"
 description = "Export scikit-learn model files to JSON for sharing or deploying predictive models with peace of mind."
 authors = [
     { name = "Alejandro Gutierrez", email = "a.gutierrez@g-npd.com" },
