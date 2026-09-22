@@ -91,8 +91,8 @@ ALL_ESTIMATORS["_ConstantPredictor"] = _ConstantPredictor
 TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0", "1.9.1"]
 
 # Version of openmodels's own wire format (the shape of the serialized dict), independent of
-# scikit-learn's version (domain_version) and of openmodels's own release version
-# (openmodels_version, informational only). Bump this only when the structure or the meaning of
+# scikit-learn's version (domain_version) and of the writing tool's release version
+# (producer_version, informational only). Bump this only when the structure or the meaning of
 # its fields changes.
 # v2: producer_version/producer_name/domain/openmodels_format_version/openmodels_version moved
 # from flat top-level keys into a single nested "metadata" dict, present once at the true root
@@ -102,6 +102,7 @@ TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0", "1.9.1"]
 # version; scikit-learn's version moved to the new domain_version field, and "producers" was
 # renamed "packages" (always including the domain package). Readers fall back to
 # producer_version as the scikit-learn version, and to "producers", for v1/v2 files only.
+# openmodels_version was dropped: producer_version holds the same value.
 OPENMODELS_FORMAT_VERSION = 3
 
 
@@ -1253,17 +1254,15 @@ class SklearnSerializer(
         packages = {
             name: self._resolve_package_version(name) for name in sorted(package_names)
         }
-        openmodels_version = _openmodels_version()
 
         metadata = {
             # ONNX-style: the tool that wrote this file, not the model's own package.
             "producer_name": "openmodels",
-            "producer_version": openmodels_version,
+            "producer_version": _openmodels_version(),
             "domain": "sklearn",
             "domain_version": sklearn.__version__,
             "packages": packages,
             "openmodels_format_version": OPENMODELS_FORMAT_VERSION,
-            "openmodels_version": openmodels_version,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "dependency_versions": {
                 "python": platform.python_version(),

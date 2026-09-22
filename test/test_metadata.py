@@ -191,7 +191,8 @@ def test_metadata_producer_is_openmodels():
     # ONNX-style: the producer is the tool that wrote the file, not the model's package.
     assert metadata["producer_name"] == "openmodels"
     assert metadata["producer_version"] == _openmodels_version()
-    assert metadata["producer_version"] == metadata["openmodels_version"]
+    # Superseded by producer_version in v3.
+    assert "openmodels_version" not in metadata
     assert metadata["domain"] == "sklearn"
     assert metadata["domain_version"] == sklearn.__version__
 
@@ -233,8 +234,8 @@ def test_v3_producer_version_never_compared_to_sklearn():
     serialized = serializer.serialize(model)
     metadata = serialized["metadata"]
     metadata.pop("domain_version")
-    metadata["producer_name"] = "proximetricsR"
-    metadata["producer_version"] = "0.7.1"
+    metadata["producer_name"] = "my_r_exporter"
+    metadata["producer_version"] = "1.2.0"
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
