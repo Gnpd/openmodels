@@ -27,16 +27,26 @@ The root-level `metadata` object mixes two kinds of fields:
 **Autofilled** (written by the model serializer, e.g. `SklearnSerializer`, on every call to
 `serialize()`):
 
+The autofilled fields fall into four groups:
+
+- **Who wrote the file** - `producer_name`/`producer_version`, following
+  [ONNX](https://onnx.ai/)'s meaning of these fields (the tool that generated the file, e.g.
+  `skl2onnx`). Never checked.
+- **What the file needs to load** - `domain`/`domain_version` and `packages`. Checked on
+  deserialize, warning only (never blocking).
+- **The writer's environment** - `dependency_versions`. Never checked.
+- **Bookkeeping** - `openmodels_format_version` (checked), `created_at`.
+
 | Field | Type | Meaning |
 |---|---|---|
-| `producer_version` | `str` | The scikit-learn version that produced this file (`sklearn.__version__` at serialize time). Used only to warn on a version mismatch at deserialize time - never to block loading. |
-| `producer_name` | `str` | The top-level package the *outermost* model class belongs to (`model.__module__.split(".")[0]`) - `"sklearn"` for any scikit-learn estimator, something else (e.g. `"chemotools"`) for a registered third-party one. |
-| `producers` | `dict` | `{package_name: version}` for every package contributing an estimator class anywhere in the tree - not just the outermost one. For a plain (non-composite) model this is a single entry identical to `producer_name`/`producer_version`; for e.g. a `Pipeline` mixing a scikit-learn step with a registered third-party step, it has one entry per distinct package. Version lookup is best-effort (an already-imported module's own `__version__` attribute, falling back to installed-package metadata, falling back to `"unknown"`) since it must work for packages like scikit-learn itself, whose import name (`sklearn`) differs from its distribution name (`scikit-learn`). |
-| `domain` | `str` | Currently always `"sklearn"`. Reserved for future non-scikit-learn model serializers. |
-| `openmodels_format_version` | `int` | The version of *this wire format's shape*, independent of both `producer_version` and `openmodels_version` above - bumped only when the structure documented on this page changes. Currently `2`. A file with no `openmodels_format_version` key predates this field and has version `1`'s flat shape (see "Format history" below); a value newer than what your installed openmodels understands triggers a `UserWarning` (not an error) on deserialize. |
-| `openmodels_version` | `str` | The openmodels release that wrote this file (from package metadata). Informational only - not checked at deserialize time. Useful for tracing whether a file was written before a particular bug fix landed. |
+| `producer_name` | `str` | The tool that wrote this file. Always `"openmodels"` for files written by `serialize()`; another tool writing this format sets its own name here (see "Files written by other tools" below). It does *not* name the model's own package: that's in `packages` (and derivable from the root `estimator_class`). |
+| `producer_version` | `str` | The version of the `producer_name` tool - for openmodels-written files, the openmodels release that wrote the file (from package metadata), useful for tracing whether a file was written before a particular bug fix landed. Never compared against scikit-learn. |
+| `domain` | `str` | The framework the file is reconstructed into. Currently always `"sklearn"`. Reserved for future non-scikit-learn model serializers. |
+| `domain_version` | `str` | The `domain` framework's version whose attribute layout this file follows - for openmodels-written files, the installed `sklearn.__version__` at serialize time. This is the version the deserialize-time check compares against the installed scikit-learn: any difference in the version string (patch releases included) raises a `UserWarning` listing the tested versions - it never blocks loading. Skipped if absent or `"unknown"`. Files older than format `3` have no `domain_version`; for those only, `producer_version` (which then always held the scikit-learn version) is used instead. |
+| `packages` | `dict` | `{package_name: version}` for every package whose estimator classes appear anywhere in the tree - including the outermost one - plus the `domain` package (`sklearn`), which is always listed. For a plain scikit-learn model this is the single entry `{"sklearn": <version>}`; for a third-party root model or e.g. a `Pipeline` mixing a scikit-learn step with a registered third-party step, it has one entry per distinct package. A class defined in a script or notebook is listed under its module name (e.g. `"__main__"`). Version lookup is best-effort (an already-imported module's own `__version__` attribute, falling back to installed-package metadata, falling back to `"unknown"`) since it must work for packages like scikit-learn itself, whose import name (`sklearn`) differs from its distribution name (`scikit-learn`). On deserialize, every non-`sklearn` entry is compared with the installed version and a mismatch raises a `UserWarning` (entries that are `"unknown"` on either side are skipped). Called `producers` in v2 files, which are still read. |
+| `openmodels_format_version` | `int` | The version of *this wire format's shape*, independent of both `domain_version` and `producer_version` - bumped only when the structure or meaning of the fields documented on this page changes. Currently `3`. A file with no `openmodels_format_version` key predates this field and has version `1`'s flat shape (see "Format history" below); a value newer than what your installed openmodels understands triggers a `UserWarning` (not an error) on deserialize. |
 | `created_at` | `str` | ISO 8601 UTC timestamp of when `serialize()` was called. Informational only - not checked at deserialize time, and makes two serializations of an otherwise-identical model no longer byte-identical. |
-| `dependency_versions` | `dict` | `{"numpy": ..., "scipy": ...}` - the versions of these two runtime dependencies at serialize time. Informational only, same rationale as `producer_version` but for the array/sparse-matrix libraries this format's dtype-preserving round trip depends on. |
+| `dependency_versions` | `dict` | The writer's runtime environment at serialize time. openmodels records `{"python": ..., "numpy": ..., "scipy": ...}`: the Python interpreter version (`platform.python_version()`, e.g. `"3.11.9"`) plus the array/sparse-matrix libraries this format's dtype-preserving round trip depends on. Other writers record their own runtime instead (e.g. `{"R": "4.6.1", "jsonlite": "2.0.0"}`). Informational only (not checked) - the serialized dict itself is Python-version-independent; these are for tracing and reproducing the environment that produced a file. |
 
 **Optional** (user-supplied, passed via `SerializationManager.serialize()`/`.save()`'s
 `metadata` parameter and merged into this same object - an autofilled field above always wins
@@ -96,16 +106,30 @@ A fitted `LogisticRegression`, serialized to JSON:
     "classes_": "int64", "coef_": "float64", "intercept_": "float64"
   },
   "metadata": {
-    "producer_version": "1.9.0",
-    "producer_name": "sklearn",
-    "producers": {"sklearn": "1.9.0"},
+    "producer_name": "openmodels",
+    "producer_version": "0.2.0",
     "domain": "sklearn",
-    "openmodels_format_version": 2,
-    "openmodels_version": "0.1.0",
+    "domain_version": "1.9.0",
+    "packages": {"sklearn": "1.9.0"},
+    "openmodels_format_version": 3,
     "created_at": "2026-09-05T12:00:00+00:00",
-    "dependency_versions": {"numpy": "2.1.0", "scipy": "1.14.0"},
+    "dependency_versions": {"python": "3.11.9", "numpy": "2.1.0", "scipy": "1.14.0"},
     "title": "Customer churn classifier"
   }
+}
+```
+
+A model whose classes come from a registered third-party package lists that package in
+`packages`, next to `sklearn`; `producer_*` still names openmodels, the tool that wrote it:
+
+```json
+"metadata": {
+  "producer_name": "openmodels",
+  "producer_version": "0.2.0",
+  "domain": "sklearn",
+  "domain_version": "1.9.0",
+  "packages": {"chemotools": "0.4.4", "sklearn": "1.9.0"},
+  ...
 }
 ```
 
@@ -121,6 +145,39 @@ calling `set_params()`/rebuilding fitted attributes on the real scikit-learn cla
 executing an independent computation graph, so there's no separate graph representation to keep
 in sync with it.
 
+## Files written by other tools
+
+Any tool can write this format for openmodels to load - for example an exporter in another
+language (R, MATLAB, Julia, ...) that writes a model fitted there as the equivalent scikit-learn (or
+registered third-party) estimator tree. Such a writer should fill `metadata` as follows:
+
+- `producer_name`/`producer_version`: the writer's own name and version.
+- `domain`: `"sklearn"`.
+- `domain_version` and `packages`: the versions of scikit-learn and of every package whose
+  classes the file uses, **as targeted by the writer** - the versions whose attribute layout it
+  was written and tested against. openmodels warns when the loading environment differs, which
+  is exactly when a hand-written attribute layout may no longer match. If the writer can't name
+  a version, omit it rather than writing a placeholder.
+- `openmodels_format_version`: the format version the file follows (`3`).
+- `dependency_versions`: the writer's own runtime.
+- `created_at`: as above.
+
+Every `attributes` block also needs its `attribute_types`, and every entry in `params` a
+`param_types` entry.
+
+```json
+"metadata": {
+  "producer_name": "my_r_exporter",
+  "producer_version": "1.2.0",
+  "domain": "sklearn",
+  "domain_version": "1.9.1",
+  "packages": {"my_estimators": "0.3.0", "sklearn": "1.9.1"},
+  "openmodels_format_version": 3,
+  "created_at": "2026-09-21T09:23:50Z",
+  "dependency_versions": {"R": "4.6.1", "jsonlite": "2.0.0"}
+}
+```
+
 ## Format history
 
 - **v1** (initial): `producer_version`, `producer_name`, `domain`, `openmodels_format_version`,
@@ -133,6 +190,15 @@ in sync with it.
   does - so a `metadata` dict missing one of these (e.g. a file written by an earlier v2 build)
   still deserializes fine; code reading these fields should use their absence gracefully rather
   than assume every v2 file has all of them.
+- **v3**: `producer_name`/`producer_version` now follow ONNX and name the tool that wrote the
+  file (`"openmodels"` and its version, or another writer's) - in v1/v2 they were the outermost
+  model's package and, always, the scikit-learn version. The scikit-learn version moved to the
+  new `domain_version` field; `producers` was renamed `packages` and always includes `sklearn`;
+  `dependency_versions` gained `python`. Readers use `domain_version` when present and fall back
+  to `producer_version` only for v1/v2 files (a v3 `producer_version` is never compared against
+  scikit-learn), and read `producers` when `packages` is absent. `openmodels_version` was
+  removed: `producer_version` now carries the same information for openmodels-written files
+  (v1/v2 files still have it; nothing reads it).
 
 ## Why not ONNX or PMML?
 
