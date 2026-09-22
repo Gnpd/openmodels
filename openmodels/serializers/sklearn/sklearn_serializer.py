@@ -1315,7 +1315,9 @@ class SklearnSerializer(
             sklearn_version = None
         self._check_version(sklearn_version)
         # v2 files called this map "producers".
-        self._check_package_versions(metadata.get("packages", metadata.get("producers")))
+        self._check_package_versions(
+            metadata.get("packages", metadata.get("producers"))
+        )
         self._check_format_version(format_version)
 
         return self._deserialize_core(data)
