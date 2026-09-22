@@ -8,6 +8,7 @@ converted to and from dictionary representations.
 from typing import Any, Callable, Dict, List, Set, Tuple, Type, Optional, Union
 from importlib.metadata import version as _package_version, PackageNotFoundError
 from datetime import datetime, timezone
+import platform
 import sys
 import numpy as np
 import scipy  # type: ignore
@@ -95,7 +96,11 @@ TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0", "1.9.1"]
 # v2: producer_version/producer_name/domain/openmodels_format_version/openmodels_version moved
 # from flat top-level keys into a single nested "metadata" dict, present once at the true root
 # (not duplicated on every nested/composite sub-estimator as in v1).
-OPENMODELS_FORMAT_VERSION = 2
+# v3: producer_version now holds the version of producer_name's package (the outermost model's),
+# not always scikit-learn's; scikit-learn's version moved to the new domain_version field, and
+# producers always includes the domain package. Readers fall back to producer_version as the
+# scikit-learn version for v1/v2 files.
+OPENMODELS_FORMAT_VERSION = 3
 
 
 def _openmodels_version() -> str:
@@ -338,8 +343,9 @@ class SklearnSerializer(
 
         Notes
         -----
-        - Issues a warning if the stored version does not match the current version.
-        - Mentions the baseline supported version (1.7.1).
+        - Issues a warning if the stored version string does not exactly match the current
+          version (patch-level differences included).
+        - Mentions the versions openmodels has been tested under (TESTED_VERSIONS).
         - Does nothing if no version is stored (for backward compatibility).
         """
         if not stored_version:
@@ -354,6 +360,38 @@ class SklearnSerializer(
                 f"OpenModels has been tested under {TESTED_VERSIONS}. ",
                 UserWarning,
             )
+
+    def _check_producer_versions(self, producers: Optional[Dict[str, str]]) -> None:
+        """
+        Check the stored version of every non-scikit-learn package that contributed an
+        estimator class (the "producers" metadata field) against the installed one.
+
+        Parameters
+        ----------
+        producers : dict
+            ``{package_name: version}`` recorded during serialization.
+
+        Notes
+        -----
+        - Issues a warning per package whose stored version doesn't exactly match the
+          installed one. scikit-learn itself is skipped - `_check_version` covers it.
+        - Skips entries whose stored or installed version is "unknown" (nothing to compare).
+        - Does nothing if no producers are stored (pre-producers files).
+        """
+        if not producers:
+            return
+
+        for name, stored_version in producers.items():
+            if name == "sklearn" or stored_version == "unknown":
+                continue
+            current_version = self._resolve_package_version(name)
+            if current_version != "unknown" and stored_version != current_version:
+                warnings.warn(
+                    f"Version mismatch detected for package '{name}':\n"
+                    f"- Model serialized with {name} {stored_version}\n"
+                    f"- Current environment: {name} {current_version}",
+                    UserWarning,
+                )
 
     def _check_format_version(self, stored_version: Optional[int]) -> None:
         """
@@ -370,7 +408,7 @@ class SklearnSerializer(
         - Issues a warning if the stored version is newer than what this installation
           understands (the file may use a structure introduced after this release).
         - Does nothing if no version is stored - true for every file written before this field
-          existed, which are exactly today's (version-0, unversioned) shape.
+          existed, which all have the version-1 (flat, unversioned) shape.
         """
         if stored_version is None:
             return  # No format version info available - pre-versioning file.
@@ -1206,21 +1244,25 @@ class SklearnSerializer(
         """
         serialized_estimator = self._serialize_core(model)
 
-        producer_names: Set[str] = set()
+        producer_name = model.__module__.split(".")[0]
+        # The domain package is always a dependency, even when no class in the tree is its own.
+        producer_names: Set[str] = {"sklearn", producer_name}
         self._collect_producer_names(serialized_estimator, producer_names)
         producers = {
             name: self._resolve_package_version(name) for name in sorted(producer_names)
         }
 
         metadata = {
-            "producer_version": sklearn.__version__,
-            "producer_name": model.__module__.split(".")[0],
+            "producer_version": producers[producer_name],
+            "producer_name": producer_name,
             "producers": producers,
             "domain": "sklearn",
+            "domain_version": sklearn.__version__,
             "openmodels_format_version": OPENMODELS_FORMAT_VERSION,
             "openmodels_version": _openmodels_version(),
             "created_at": datetime.now(timezone.utc).isoformat(),
             "dependency_versions": {
+                "python": platform.python_version(),
                 "numpy": np.__version__,
                 "scipy": scipy.__version__,
             },
@@ -1258,7 +1300,11 @@ class SklearnSerializer(
         # Version control check. `data` itself is the fallback for pre-v2 files, which have
         # no nested "metadata" key and carried these fields flat at the top level instead.
         metadata = data.get("metadata", data)
-        self._check_version(metadata.get("producer_version"))
+        # v1/v2 files have no domain_version; their producer_version always held the
+        # scikit-learn version (from v3 on it's the outermost model package's version).
+        sklearn_version = metadata.get("domain_version", metadata.get("producer_version"))
+        self._check_version(sklearn_version)
+        self._check_producer_versions(metadata.get("producers"))
         self._check_format_version(metadata.get("openmodels_format_version"))
 
         return self._deserialize_core(data)
