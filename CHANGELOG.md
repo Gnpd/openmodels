@@ -9,22 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Wire format v3:** `metadata.producer_version` now records the version of the package named
-  by `producer_name` (the outermost model's package), instead of always scikit-learn's version -
-  previously a registered third-party root model produced a mismatched pair like
-  `producer_name="chemotools", producer_version="1.9.1"` (scikit-learn's version). scikit-learn's
-  version moved to a new `domain_version` field, which the deserialize-time version check now
-  reads (falling back to `producer_version` for v1/v2 files, where it always held scikit-learn's
-  version). `openmodels_format_version` is now `3`. See `docs/format.md`
-- `metadata.producers` now always includes `sklearn`, even when the tree has no scikit-learn
-  estimator class (e.g. a standalone third-party estimator)
+- **Wire format v3:** `metadata.producer_name`/`producer_version` now follow ONNX and name the
+  tool that wrote the file - `"openmodels"` and its version for files written by
+  `serialize()`, or another writer's own name/version (e.g. an R exporter). In v1/v2 they held
+  the outermost model's package and, always, the scikit-learn version, which paired mismatched
+  values for a third-party root model and left non-Python writers nothing honest to write.
+  scikit-learn's version moved to a new `domain_version` field, which the deserialize-time
+  version check now reads (falling back to `producer_version` only for v1/v2 files).
+  `openmodels_format_version` is now `3`. See `docs/format.md`
+- `metadata.producers` renamed `metadata.packages`, and it now always includes `sklearn`, even
+  when the tree has no scikit-learn estimator class. v2 files' `producers` are still read
+- The scikit-learn version check now skips an `"unknown"` version instead of warning
+- `metadata.openmodels_version` removed from v3 files: `producer_version` (with
+  `producer_name: "openmodels"`) records the same release. It was never read on deserialize
 
 ### Added
 
 - Deserialize now also warns (never fails) when a non-scikit-learn package listed in
-  `metadata.producers` is installed at a different version than the one recorded
+  `metadata.packages` is installed at a different version than the one recorded
 - `metadata.dependency_versions` now also records the Python interpreter version (`"python"`,
   from `platform.python_version()`) - informational only, not checked on deserialize
+- `docs/format.md`: "Files written by other tools" section describing how a non-openmodels
+  writer should fill `metadata`
 
 ## [0.2.1] - 2026-09-14
 
