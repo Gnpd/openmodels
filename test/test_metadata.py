@@ -1,4 +1,6 @@
 import json
+import platform
+import warnings
 from datetime import datetime
 
 import numpy as np
@@ -101,6 +103,8 @@ def test_deserialize_old_flat_format_still_works():
     old_flat = {k: v for k, v in serialized.items() if k != "metadata"}
     old_flat.update(serialized["metadata"])
     old_flat["openmodels_format_version"] = 1
+    # Pre-v3 files have no domain_version; producer_version held the scikit-learn version.
+    old_flat.pop("domain_version")
 
     deserialized_model = SklearnSerializer().deserialize(old_flat)
     assert np.array_equal(model.predict(X), deserialized_model.predict(X))
@@ -118,6 +122,7 @@ def test_metadata_includes_created_at_and_dependency_versions():
     datetime.fromisoformat(metadata["created_at"])
 
     assert metadata["dependency_versions"] == {
+        "python": platform.python_version(),
         "numpy": np.__version__,
         "scipy": scipy.__version__,
     }
@@ -154,3 +159,87 @@ def test_metadata_producers_multiple_packages():
     expected_third_party_name = DummyThirdPartyTransformer.__module__.split(".")[0]
     assert producers["sklearn"] == sklearn.__version__
     assert expected_third_party_name in producers
+
+
+class DummyThirdPartyRegressor(BaseEstimator):
+    def fit(self, X, y=None):
+        self.mean_ = float(np.mean(y))
+        return self
+
+    def predict(self, X):
+        return np.full(len(X), self.mean_)
+
+
+def get_fitted_third_party_root():
+    X = np.array([[0.0], [1.0], [2.0], [3.0]])
+    y = np.array([1.0, 2.0, 3.0, 4.0])
+    serializer = SklearnSerializer(
+        custom_estimators={"DummyThirdPartyRegressor": DummyThirdPartyRegressor}
+    )
+    return DummyThirdPartyRegressor().fit(X, y), X, serializer
+
+
+def test_metadata_plain_sklearn_producer_matches_domain():
+    model, _ = get_fitted_model()
+    metadata = SklearnSerializer().serialize(model)["metadata"]
+
+    assert metadata["producer_name"] == "sklearn"
+    assert metadata["producer_version"] == sklearn.__version__
+    assert metadata["domain_version"] == sklearn.__version__
+
+
+def test_metadata_third_party_root_producer_is_consistent():
+    model, _, serializer = get_fitted_third_party_root()
+    metadata = serializer.serialize(model)["metadata"]
+
+    producer_name = DummyThirdPartyRegressor.__module__.split(".")[0]
+    assert metadata["producer_name"] == producer_name
+    assert metadata["producer_version"] == metadata["producers"][producer_name]
+    assert metadata["domain"] == "sklearn"
+    assert metadata["domain_version"] == sklearn.__version__
+    # The domain package is always listed, even with no sklearn class in the tree.
+    assert metadata["producers"]["sklearn"] == sklearn.__version__
+
+
+def test_version_check_reads_domain_version():
+    model, X = get_fitted_model()
+    serialized = SklearnSerializer().serialize(model)
+
+    serialized["metadata"]["domain_version"] = "0.0.1"
+    with pytest.warns(UserWarning, match="Version mismatch"):
+        SklearnSerializer().deserialize(serialized)
+
+
+def test_version_check_ignores_producer_version_when_domain_version_present():
+    model, X, serializer = get_fitted_third_party_root()
+    serialized = serializer.serialize(model)
+    serialized["metadata"]["producer_version"] = "not-sklearn-version"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        deserialized = serializer.deserialize(serialized)
+    assert np.array_equal(model.predict(X), deserialized.predict(X))
+
+
+def test_v2_metadata_falls_back_to_producer_version():
+    model, _ = get_fitted_model()
+    serialized = SklearnSerializer().serialize(model)
+    metadata = serialized["metadata"]
+    metadata.pop("domain_version")
+    metadata["openmodels_format_version"] = 2
+    metadata["producer_version"] = "0.0.1"
+
+    with pytest.warns(UserWarning, match="scikit-learn 0.0.1"):
+        SklearnSerializer().deserialize(serialized)
+
+
+def test_third_party_producer_version_mismatch_warns(monkeypatch):
+    model, _, serializer = get_fitted_third_party_root()
+    serialized = serializer.serialize(model)
+    serialized["metadata"]["producers"]["somepkg"] = "1.0.0"
+    monkeypatch.setattr(
+        SklearnSerializer, "_resolve_package_version", staticmethod(lambda name: "2.0.0")
+    )
+
+    with pytest.warns(UserWarning, match="package 'somepkg'"):
+        serializer.deserialize(serialized)
