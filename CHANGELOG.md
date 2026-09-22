@@ -5,6 +5,27 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Wire format v3:** `metadata.producer_version` now records the version of the package named
+  by `producer_name` (the outermost model's package), instead of always scikit-learn's version -
+  previously a registered third-party root model produced a mismatched pair like
+  `producer_name="chemotools", producer_version="1.9.1"` (scikit-learn's version). scikit-learn's
+  version moved to a new `domain_version` field, which the deserialize-time version check now
+  reads (falling back to `producer_version` for v1/v2 files, where it always held scikit-learn's
+  version). `openmodels_format_version` is now `3`. See `docs/format.md`
+- `metadata.producers` now always includes `sklearn`, even when the tree has no scikit-learn
+  estimator class (e.g. a standalone third-party estimator)
+
+### Added
+
+- Deserialize now also warns (never fails) when a non-scikit-learn package listed in
+  `metadata.producers` is installed at a different version than the one recorded
+- `metadata.dependency_versions` now also records the Python interpreter version (`"python"`,
+  from `platform.python_version()`) - informational only, not checked on deserialize
+
 ## [0.2.1] - 2026-09-14
 
 ### Fixed
