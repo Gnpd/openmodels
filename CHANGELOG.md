@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Isomap`/`LocallyLinearEmbedding`; the tree is rebuilt on load rather than stored
 - `RadiusNeighborsTransformer` didn't save its training data, so brute-force models couldn't
   `transform` after load and non-euclidean `kd_tree` ones gave wrong results
+- `KernelDensity` couldn't be used after loading in any configuration: its search tree was
+  restored under the wrong attribute name, without its metric or sample weights, and a
+  `ball_tree` one couldn't be saved. It now round-trips exactly. Weighted models saved by earlier
+  versions load with uniform weights, since their weights were never saved
 
 ## [0.2.2] - 2026-09-22
 

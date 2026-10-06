@@ -55,7 +55,7 @@ from sklearn.tree._tree import Tree
 from sklearn.base import BaseEstimator, check_is_fitted
 from sklearn.exceptions import NotFittedError
 from sklearn.utils.discovery import all_estimators
-from sklearn.neighbors import BallTree, KDTree
+from sklearn.neighbors import BallTree, KDTree, KernelDensity
 
 # Private, but its tree-building code (NeighborsBase._fit) is identical across TESTED_VERSIONS;
 # see _rebuild_neighbors_tree.
@@ -686,8 +686,8 @@ class SklearnSerializer(
 
         # A neighbors estimator's search tree is rebuilt on load from its own state (see
         # _rebuild_neighbors_tree), so a stored tree is never used. A KDTree is still written
-        # only so openmodels 0.2.2 can read the file; a BallTree can't be serialized and no
-        # older reader could use it, so it's left out.
+        # only so openmodels 0.2.2 can read the file; no older reader can load a BallTree, so
+        # it's left out (smaller files).
         if isinstance(estimator, NeighborsBase) and isinstance(
             attributes.get("_tree"), BallTree
         ):
@@ -716,7 +716,7 @@ class SklearnSerializer(
         return [
             (BaseEstimator, self._serialize_core),
             (BaseLoss, self._serialize_loss),
-            (KDTree, self._serialize_kdtree),
+            ((KDTree, BallTree), self._serialize_search_tree),
             (Kernel, self._serialize_kernel),
             (Tree, self._serialize_tree),
             (TreePredictor, self._serialize_tree_predictor),
@@ -1112,28 +1112,61 @@ class SklearnSerializer(
         params = value.get("params", {})
         return loss_cls(**params)
 
-    def _serialize_kdtree(self, value: KDTree) -> Dict[str, Any]:
+    def _serialize_search_tree(self, value: Union[KDTree, BallTree]) -> Dict[str, Any]:
         """
-        Serializes a KDTree object to a dictionary.
+        Serialize a KDTree/BallTree as the inputs it's rebuilt from: its data and its sample
+        weights (None when unweighted). The weights are stored only inside the tree - e.g.
+        KernelDensity keeps them nowhere else. The metric and leaf_size live on the owning
+        estimator, which rebuilds the tree with them on load (`_rebuild_neighbors_tree`,
+        `_rebuild_kernel_density_tree`). dtype is captured explicitly (same reasoning as
+        _serialize_bisecting_tree) so non-float64 data isn't silently widened by JSON.
         """
-        # For KDTree, we'll use a simpler approach - just serialize the essential data
-        # and let the tree be reconstructed from the data. dtype is captured explicitly
-        # (same reasoning as _serialize_bisecting_tree) so non-float64 data isn't silently
-        # widened by the generic JSON round-trip.
         data = np.array(value.data)
+        sample_weight = value.sample_weight
         return {
             "data": self.convert_to_serializable(data),
             "data_dtype": str(data.dtype),
+            "sample_weight": (
+                None
+                if sample_weight is None
+                else self.convert_to_serializable(np.asarray(sample_weight))
+            ),
         }
 
-    def _deserialize_kdtree(self, kdtree_data: Dict[str, Any]) -> KDTree:
+    def _deserialize_search_tree(
+        self, tree_data: Dict[str, Any], tree_cls: Type[Union[KDTree, BallTree]]
+    ) -> Union[KDTree, BallTree]:
         """
-        Deserializes a dictionary representation of a KDTree back to a KDTree object.
+        Rebuild a KDTree/BallTree from its data and sample weights, with the default metric
+        and leaf_size. Estimators that own a tree rebuild it again with their real metric
+        (see `_serialize_search_tree`). Files written before 0.2.3 have no "sample_weight".
         """
-        data = np.array(kdtree_data["data"], dtype=kdtree_data.get("data_dtype"))
+        data = np.array(tree_data["data"], dtype=tree_data.get("data_dtype"))
+        sample_weight = tree_data.get("sample_weight")
+        return tree_cls(
+            data,
+            sample_weight=None if sample_weight is None else np.asarray(sample_weight),
+        )
 
-        # Create KDTree with data - the tree will be rebuilt automatically
-        return KDTree(data)
+    def _rebuild_kernel_density_tree(self, model: BaseEstimator) -> None:
+        """
+        Rebuild a KernelDensity's `tree_` exactly as `KernelDensity.fit` builds it: the loaded
+        tree's class, data and sample weights, plus the estimator's `metric`, `leaf_size` and
+        `metric_params` (which the loaded tree, built with defaults, lacks).
+        """
+        tree = getattr(model, "tree_", None)
+        if not isinstance(model, KernelDensity) or not isinstance(
+            tree, (KDTree, BallTree)
+        ):
+            return
+        sample_weight = tree.sample_weight
+        model.tree_ = type(tree)(
+            np.asarray(tree.data),
+            metric=model.metric,
+            leaf_size=model.leaf_size,
+            sample_weight=None if sample_weight is None else np.asarray(sample_weight),
+            **(model.metric_params or {}),
+        )
 
     def _rebuild_neighbors_tree(self, model: BaseEstimator) -> None:
         """
@@ -1573,9 +1606,13 @@ class SklearnSerializer(
             if attr_type == "Tree":
                 model.tree_ = self._deserialize_tree(value)
                 continue
-            # Skip _tree attribute for KDTree - let the transformer recreate it
-            if attr_type == "KDTree":
-                model._tree = self._deserialize_kdtree(value)
+            # Search trees (a neighbors estimator's `_tree`, KernelDensity's `tree_`), restored
+            # under the attribute's own name; their owners rebuild them after the loop.
+            if attr_type in ("KDTree", "BallTree"):
+                tree_cls = KDTree if attr_type == "KDTree" else BallTree
+                setattr(
+                    model, attribute, self._deserialize_search_tree(value, tree_cls)
+                )
                 continue
             # Use convert_from_serializable for all attributes
             setattr(
@@ -1587,5 +1624,6 @@ class SklearnSerializer(
         if estimator_class == "Birch" and self._birch_pending_leaf_links:
             self._resolve_birch_leaf_links()
         self._rebuild_neighbors_tree(model)
+        self._rebuild_kernel_density_tree(model)
 
         return model
