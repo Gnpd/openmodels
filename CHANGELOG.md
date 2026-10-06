@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (e.g. neighbors search trees) was never tested - which hid the neighbors bug above. Dense and
   sparse fits are now round-tripped separately, each on its own clone, and the caller's model
   is no longer fitted
+- NumPy types passed as parameters were loaded as Python `float`, silently changing the model:
+  `CountVectorizer`'s default `dtype=np.int64` produced float64 counts after load, and e.g.
+  `OneHotEncoder(dtype=np.float32)` produced float64 output. They now load as the original
+  NumPy type, including from files written by earlier versions. An unknown type name still
+  loads as `float`, but now with a `UserWarning`
 
 ## [0.2.2] - 2026-09-22
 

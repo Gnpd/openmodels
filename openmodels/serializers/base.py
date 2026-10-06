@@ -10,6 +10,7 @@ support for new serialization targets.
 import importlib
 import inspect
 import sys
+import warnings
 from types import ModuleType
 
 import numpy as np
@@ -25,6 +26,13 @@ from openmodels.exceptions import DeserializationError
 # Top-level packages whose (already-imported) functions a model file may reference, e.g. a
 # SelectKBest score_func such as sklearn.feature_selection.chi2.
 DEFAULT_FUNCTION_ROOTS = frozenset({"numpy", "scipy", "sklearn"})
+
+# Python builtin types a type-valued param (e.g. `dtype=float`) may name; NumPy scalar types
+# are resolved separately (see SerializerMixin._deserialize_type).
+_BUILTIN_TYPES: Dict[str, type] = {
+    t.__name__: t
+    for t in (int, float, bool, str, bytes, complex, tuple, list, dict, object)
+}
 
 
 class SerializerMixin:
@@ -97,18 +105,33 @@ class SerializerMixin:
         return {"type_name": value.__name__}
 
     def _deserialize_type(self, value):
-        # Deserialize Python type objects from their string name
-        # Only allow a safe whitelist of types; default to float if not found
-        allowed_types = {
-            "int": int,
-            "float": float,
-            "str": str,
-            "bool": bool,
-            "tuple": tuple,
-            "list": list,
-            "dict": dict,
-        }
-        return allowed_types.get(value["type_name"], float)
+        """
+        Resolve a type written by `_serialize_type` (its `__name__`, e.g. a `dtype=np.int64`
+        param) back to the type: a Python builtin from `_BUILTIN_TYPES`, else a NumPy scalar
+        type. Only canonical NumPy names (`np.dtype(name).type.__name__ == name`) are
+        accepted, since that's all the writer produces; aliases like "f8" and structured specs
+        like "i4,f8" are not. `np.dtype` only parses the name - nothing is imported or called.
+        An unknown name falls back to `float`, as before, but with a warning.
+        """
+        name = value.get("type_name")
+        if name in _BUILTIN_TYPES:
+            return _BUILTIN_TYPES[name]
+        try:
+            numpy_type = np.dtype(name).type
+        except (TypeError, ValueError):
+            numpy_type = None
+        if (
+            numpy_type is not None
+            and numpy_type is not np.void
+            and numpy_type.__name__ == name
+        ):
+            return numpy_type
+        warnings.warn(
+            f"Unknown type '{name}' in the model file; loading it as float. The loaded "
+            f"model may behave differently from the original.",
+            UserWarning,
+        )
+        return float
 
     def _serialize_function(self, func: Callable) -> Dict[str, str]:
         """Serialize a Python function by its module and name."""
