@@ -30,6 +30,7 @@ from ._custom_estimator import iter_custom_estimators, load_custom_estimators
 
 import sklearn
 from sklearn.calibration import _CalibratedClassifier, _SigmoidCalibration
+from sklearn.compose import make_column_selector
 from sklearn.cluster._birch import _CFNode, _CFSubcluster
 from sklearn.cluster._bisect_k_means import _BisectingTree
 from sklearn.ensemble._hist_gradient_boosting.predictor import TreePredictor
@@ -236,7 +237,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     ],
     "TunedThresholdClassifierCV": ["_curve_scorer"],
     # Transformers:
-    "ColumnTransformer": ["_columns", "_remainder"],
+    "ColumnTransformer": ["_columns", "_remainder", "_transformer_to_input_indices"],
     "OneHotEncoder": [
         "_infrequent_enabled",
         "_drop_idx_after_grouping",
@@ -727,6 +728,8 @@ class SklearnSerializer(
             (_BisectingTree, self._serialize_bisecting_tree),
             (_CurveScorer, self._serialize_curve_scorer),
             (_CFNode, self._serialize_cfnode),
+            # Callable, so it must come before the generic function handler in super().
+            (make_column_selector, self._serialize_column_selector),
         ] + super()._get_serializer_handlers()
 
     def _get_deserializer_handlers(self):
@@ -747,6 +750,7 @@ class SklearnSerializer(
                 ("_CalibratedClassifier", self._deserialize_calibrated_classifier),
                 ("_CurveScorer", self._deserialize_curve_scorer),
                 ("_CFNode", self._deserialize_cfnode),
+                ("make_column_selector", self._deserialize_column_selector),
             ]
             + loss_handlers
             + estimator_handlers
@@ -1303,6 +1307,47 @@ class SklearnSerializer(
         if isinstance(value, list):
             return [self._deserialize_kernel_value(v) for v in value]
         return value
+
+    def _serialize_column_selector(
+        self, selector: make_column_selector
+    ) -> Dict[str, Any]:
+        """
+        Serialize a ColumnTransformer `make_column_selector` as its three settings. A dtype
+        spec is a string ("number"), a type (np.number, float) or a list of these; types are
+        written as `_serialize_type` does.
+        """
+
+        def dtype_spec(spec: Any) -> Any:
+            if isinstance(spec, (list, tuple)):
+                return [dtype_spec(s) for s in spec]
+            if isinstance(spec, type):
+                return self._serialize_type(spec)
+            return spec
+
+        return {
+            "pattern": selector.pattern,
+            "dtype_include": dtype_spec(selector.dtype_include),
+            "dtype_exclude": dtype_spec(selector.dtype_exclude),
+        }
+
+    def _deserialize_column_selector(
+        self, data: Dict[str, Any]
+    ) -> make_column_selector:
+        """Rebuild a `make_column_selector` from its saved settings. Only this fixed class is
+        constructed, and type names go through `_deserialize_type`."""
+
+        def dtype_spec(spec: Any) -> Any:
+            if isinstance(spec, list):
+                return [dtype_spec(s) for s in spec]
+            if isinstance(spec, dict) and "type_name" in spec:
+                return self._deserialize_type(spec)
+            return spec
+
+        return make_column_selector(
+            pattern=data.get("pattern"),
+            dtype_include=dtype_spec(data.get("dtype_include")),
+            dtype_exclude=dtype_spec(data.get("dtype_exclude")),
+        )
 
     def _serialize_curve_scorer(self, scorer: _CurveScorer) -> Dict[str, Any]:
         # Find the scorer name in sklearn.metrics.get_scorer_names()

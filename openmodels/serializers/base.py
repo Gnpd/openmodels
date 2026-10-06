@@ -47,6 +47,9 @@ def _find_function_module(func: Any) -> Optional[str]:
     return None
 
 
+# Keys of a saved slice (see SerializerMixin._serialize_slice).
+_SLICE_KEYS = frozenset({"start", "stop", "step"})
+
 # Keys of a saved frozen SciPy distribution (see ScipySerializerMixin._serialize_scipy_dist).
 _SCIPY_DIST_KEYS = frozenset({"dist_name", "args", "kwargs"})
 
@@ -118,11 +121,8 @@ class SerializerMixin:
         return {"start": value.start, "stop": value.stop, "step": value.step}
 
     def _deserialize_slice(self, value):
-        return slice(
-            start=value.get("start"),
-            stop=value.get("stop"),
-            step=value.get("step"),
-        )
+        # slice() takes positional arguments only.
+        return slice(value.get("start"), value.get("stop"), value.get("step"))
 
     def _serialize_type(self, value: type):
         return {"type_name": value.__name__}
@@ -134,6 +134,8 @@ class SerializerMixin:
         type. Only canonical NumPy names (`np.dtype(name).type.__name__ == name`) are
         accepted, since that's all the writer produces; aliases like "f8" and structured specs
         like "i4,f8" are not. `np.dtype` only parses the name - nothing is imported or called.
+        NumPy's abstract scalar types (`np.number`, `np.integer`, ...), which aren't dtypes, are
+        resolved as `np.<name>` when that is an `np.generic` subclass with that exact name.
         An unknown name falls back to `float`, as before, but with a warning.
         """
         name = value.get("type_name")
@@ -149,6 +151,18 @@ class SerializerMixin:
             and numpy_type.__name__ == name
         ):
             return numpy_type
+        abstract_type = (
+            getattr(np, name, None)
+            if isinstance(name, str) and not name.startswith("_")
+            else None
+        )
+        if (
+            isinstance(abstract_type, type)
+            and issubclass(abstract_type, np.generic)
+            and abstract_type is not np.void
+            and abstract_type.__name__ == name
+        ):
+            return abstract_type
         warnings.warn(
             f"Unknown type '{name}' in the model file; loading it as float. The loaded "
             f"model may behave differently from the original.",
@@ -215,8 +229,11 @@ class SerializerMixin:
 
     def _restore_dict_value(self, value: Any) -> Any:
         """Hook for restoring a value inside a plain string-keyed dict, whose values carry no
-        type tags of their own. Mixins override it for values recognisable by their shape
-        (see ScipySerializerMixin). Returns the value unchanged by default."""
+        type tags of their own, recognised by its exact saved shape: slices here (e.g.
+        ColumnTransformer's output_indices_), more in mixins (see ScipySerializerMixin).
+        Anything else is returned unchanged."""
+        if isinstance(value, dict) and set(value) == _SLICE_KEYS:
+            return self._deserialize_slice(value)
         return value
 
     def _deserialize_dict(self, value: Any) -> Any:

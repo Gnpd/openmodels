@@ -90,6 +90,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `KernelRidge`; kernels with array hyperparameters (a fitted anisotropic `RBF`) or lists of
   kernels (`CompoundKernel`) couldn't be saved. All now round-trip; an unknown or abstract
   kernel type raises `DeserializationError`
+- A `ColumnTransformer` couldn't `transform` pandas DataFrames after loading, so a fitted
+  `Pipeline` starting with one couldn't `predict`; `get_feature_names_out` and
+  `set_output(transform="pandas")` failed for any input. Its private column index map is now
+  saved; files written by earlier versions need to be re-saved
+- Any `slice` value (e.g. `ColumnTransformer` columns given as `slice(0, 2)`) crashed on load;
+  slices inside dicts (such as `output_indices_`) now come back as slices too
+- `make_column_selector` column selections can now be saved, including NumPy dtype classes
+  such as `np.number`
 
 ## [0.2.2] - 2026-09-22
 
