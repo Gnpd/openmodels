@@ -16,7 +16,7 @@ from types import ModuleType
 import numpy as np
 from scipy.sparse import csr_matrix, csc_matrix, csr_array, csc_array  # type: ignore
 from scipy.interpolate import interp1d, BSpline  # type: ignore
-from scipy.stats._distn_infrastructure import rv_continuous_frozen  # type: ignore
+from scipy.stats._distn_infrastructure import rv_frozen  # type: ignore
 import scipy.stats  # type: ignore
 
 from typing import Any, Optional, Callable, Dict, Set
@@ -46,6 +46,9 @@ def _find_function_module(func: Any) -> Optional[str]:
             return module_name
     return None
 
+
+# Keys of a saved frozen SciPy distribution (see ScipySerializerMixin._serialize_scipy_dist).
+_SCIPY_DIST_KEYS = frozenset({"dist_name", "args", "kwargs"})
 
 # Python builtin types a type-valued param (e.g. `dtype=float`) may name; NumPy scalar types
 # are resolved separately (see SerializerMixin._deserialize_type).
@@ -210,10 +213,17 @@ class SerializerMixin:
             )
         return obj
 
+    def _restore_dict_value(self, value: Any) -> Any:
+        """Hook for restoring a value inside a plain string-keyed dict, whose values carry no
+        type tags of their own. Mixins override it for values recognisable by their shape
+        (see ScipySerializerMixin). Returns the value unchanged by default."""
+        return value
+
     def _deserialize_dict(self, value: Any) -> Any:
         """Deserialize a dict, restoring non-string key types for the envelope produced by
-        convert_to_serializable's dict branch. Plain string-keyed dicts (the common case,
-        including dicts produced by older openmodels versions) pass through unchanged.
+        convert_to_serializable's dict branch. Values of plain string-keyed dicts (the common
+        case, including dicts produced by older openmodels versions) go through
+        `_restore_dict_value`, which leaves them unchanged unless a mixin recognises them.
         """
         if isinstance(value, dict) and value.get("__openmodels_dict__"):
             allowed_key_types = {"int": int, "float": float, "bool": bool, "str": str}
@@ -223,6 +233,8 @@ class SerializerMixin:
                 ): self.convert_from_serializable(v)
                 for k, kt, v in zip(value["keys"], value["key_types"], value["values"])
             }
+        if isinstance(value, dict):
+            return {k: self._restore_dict_value(v) for k, v in value.items()}
         return value
 
     # --- Handlers ---
@@ -392,12 +404,41 @@ class ScipySerializerMixin(SerializerMixin):
             copy=value["copy"],
         )
 
-    def _serialize_scipy_dist(self, value: rv_continuous_frozen):
-        return {"dist_name": value.dist.name, "args": value.args, "kwargs": value.kwds}
+    def _serialize_scipy_dist(self, value: rv_frozen):
+        # Continuous and discrete frozen distributions (uniform(0, 1), randint(1, 10), ...).
+        return {
+            "dist_name": value.dist.name,
+            "args": self.convert_to_serializable(value.args),
+            "kwargs": self.convert_to_serializable(value.kwds),
+        }
 
     def _deserialize_scipy_dist(self, value, value_dtype=None):
-        dist = getattr(scipy.stats, value["dist_name"])
-        return dist(*value["args"], **value["kwargs"])
+        """
+        Rebuild a frozen distribution by calling the named `scipy.stats` distribution generator
+        with the stored args. The name comes from the file, so it must name a distribution
+        generator (`rv_continuous`/`rv_discrete` instance), never any other `scipy.stats`
+        callable (e.g. `describe`), and private names are refused.
+        """
+        name = value.get("dist_name")
+        generator = (
+            getattr(scipy.stats, name, None)
+            if isinstance(name, str) and not name.startswith("_")
+            else None
+        )
+        if not isinstance(
+            generator, (scipy.stats.rv_continuous, scipy.stats.rv_discrete)
+        ):
+            raise DeserializationError(
+                f"Unknown distribution '{name}' in the model file"
+            )
+        return generator(*value.get("args", []), **value.get("kwargs", {}))
+
+    def _restore_dict_value(self, value: Any) -> Any:
+        # Distributions sit inside dict params (RandomizedSearchCV's param_distributions),
+        # whose values have no type tags; they're recognised by their exact saved shape.
+        if isinstance(value, dict) and set(value) == _SCIPY_DIST_KEYS:
+            return self._deserialize_scipy_dist(value)
+        return super()._restore_dict_value(value)
 
     def _serialize_bspline(self, spline: BSpline) -> Dict[str, Any]:
         """
@@ -434,7 +475,7 @@ class ScipySerializerMixin(SerializerMixin):
                 self._serialize_csr_matrix,
             ),
             (interp1d, self._serialize_interp1d),
-            (rv_continuous_frozen, self._serialize_scipy_dist),
+            (rv_frozen, self._serialize_scipy_dist),
         ] + super()._get_serializer_handlers()
 
     def _get_deserializer_handlers(self):
@@ -442,5 +483,6 @@ class ScipySerializerMixin(SerializerMixin):
             ("BSpline", self._deserialize_bspline),
             ("csr_matrix", self._deserialize_csr_matrix),
             ("interp1d", self._deserialize_interp1d),
-            ("scipy_dist", self._deserialize_scipy_dist),
+            ("rv_continuous_frozen", self._deserialize_scipy_dist),
+            ("rv_discrete_frozen", self._deserialize_scipy_dist),
         ] + super()._get_deserializer_handlers()

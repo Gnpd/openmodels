@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A Gaussian-process kernel's `kernel_type` read from a file must now name a `Kernel` class;
   before, any callable in `sklearn.gaussian_process.kernels` could be called with the file's
   parameters
+- A SciPy distribution read from a file must now name a `scipy.stats` distribution generator;
+  before, a crafted file could make loading call any public `scipy.stats` function (e.g.
+  `describe`) with arguments of its choosing
 
 ### Changed
 
@@ -68,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clear `DeserializationError` (they're outside the function allowlist; opt in with
   `trusted_function_modules`), and a callable that can't be located now fails at save with
   `SerializationError` instead of `AttributeError`
+- SciPy distributions (e.g. in `RandomizedSearchCV(param_distributions=...)`) always loaded as
+  raw dicts, and discrete ones (`randint`, `poisson`) couldn't be saved at all. Both now
+  round-trip, inside `param_distributions` as a dict or a list of dicts, including continuous
+  ones in files written by earlier versions
 
 ## [0.2.2] - 2026-09-22
 
