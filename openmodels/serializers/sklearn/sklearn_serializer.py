@@ -34,6 +34,7 @@ from sklearn.cluster._birch import _CFNode, _CFSubcluster
 from sklearn.cluster._bisect_k_means import _BisectingTree
 from sklearn.ensemble._hist_gradient_boosting.predictor import TreePredictor
 from sklearn.ensemble._hist_gradient_boosting.binning import _BinMapper
+from sklearn.gaussian_process import kernels as _gp_kernels
 from sklearn.gaussian_process.kernels import Kernel
 from sklearn.gaussian_process._gpc import _BinaryGaussianProcessClassifierLaplace
 from sklearn._loss.loss import (
@@ -90,15 +91,6 @@ LOSS_CLASS_REGISTRY = {
     "HalfTweedieLossIdentity": HalfTweedieLossIdentity,
     "PinballLoss": PinballLoss,
 }
-
-KERNEL_REGISTRY = [
-    "RBF",
-    "WhiteKernel",
-    "Sum",
-    "Product",
-    "ConstantKernel",
-    "DotProduct",
-]
 
 ALL_ESTIMATORS = {
     name: cls for name, cls in all_estimators() if issubclass(cls, BaseEstimator)
@@ -708,6 +700,16 @@ class SklearnSerializer(
             and value_type != "dict"
         ):
             return self._deserialize_core(value)
+        # Same for Gaussian-process kernels ({"kernel_type", "params"}): routing by content
+        # covers every kernel class, and an unknown kernel raises instead of loading as a dict.
+        if (
+            isinstance(value, dict)
+            and "kernel_type" in value
+            and "params" in value
+            and isinstance(value_type, str)
+            and value_type != "dict"
+        ):
+            return self._deserialize_kernel(value)
         return super().convert_from_serializable(value, value_type, value_dtype)
 
     # --- Handlers ---
@@ -737,10 +739,6 @@ class SklearnSerializer(
         estimator_handlers = [
             (est_name, self._deserialize_core) for est_name in self._by_name.keys()
         ]
-
-        kernel_handlers = [
-            (kernel_name, self._deserialize_kernel) for kernel_name in KERNEL_REGISTRY
-        ]
         return (
             [
                 ("estimators_collection", self._deserialize_estimators_collection),
@@ -750,7 +748,6 @@ class SklearnSerializer(
                 ("_CurveScorer", self._deserialize_curve_scorer),
                 ("_CFNode", self._deserialize_cfnode),
             ]
-            + kernel_handlers
             + loss_handlers
             + estimator_handlers
             + super()._get_deserializer_handlers()
@@ -1254,44 +1251,58 @@ class SklearnSerializer(
 
     def _serialize_kernel(self, kernel: Kernel) -> Dict[str, Any]:
         """
-        Recursively serialize a sklearn.gaussian_process.kernels.Kernel object.
+        Recursively serialize a sklearn.gaussian_process.kernels.Kernel object as its class
+        name and constructor params. Params that are kernels - also inside lists, e.g.
+        CompoundKernel's `kernels` - are serialized recursively; every other value goes through
+        convert_to_serializable (e.g. a fitted anisotropic length_scale ndarray).
         """
-        kernel_type = type(kernel).__name__
-        params = kernel.get_params(deep=False)
-        # Recursively serialize kernel parameters that are also kernels
-        serialized_params = {}
-        for k, v in params.items():
-            if isinstance(v, Kernel):
-                serialized_params[k] = self._serialize_kernel(v)
-            else:
-                serialized_params[k] = v
         return {
-            "kernel_type": kernel_type,
-            "params": serialized_params,
+            "kernel_type": type(kernel).__name__,
+            "params": {
+                k: self._serialize_kernel_value(v)
+                for k, v in kernel.get_params(deep=False).items()
+            },
         }
+
+    def _serialize_kernel_value(self, value: Any) -> Any:
+        if isinstance(value, Kernel):
+            return self._serialize_kernel(value)
+        if isinstance(value, (list, tuple)):
+            return [self._serialize_kernel_value(v) for v in value]
+        return self.convert_to_serializable(value)
 
     def _deserialize_kernel(self, data: Dict[str, Any]) -> Kernel:
         """
-        Recursively deserialize a kernel dict back to a Kernel object.
+        Recursively deserialize a kernel dict back to a Kernel object. `kernel_type` comes from
+        the file, so it must name a concrete Kernel class in sklearn.gaussian_process.kernels
+        (looked up as an attribute of that already-imported module; nothing is imported), never
+        any other callable there.
         """
-        kernel_type = data["kernel_type"]
-        params = data["params"]
-        kernel_cls = getattr(
-            __import__("sklearn.gaussian_process.kernels", fromlist=[kernel_type]),
-            kernel_type,
-            None,
+        kernel_type = data.get("kernel_type")
+        kernel_cls = (
+            getattr(_gp_kernels, kernel_type, None)
+            if isinstance(kernel_type, str) and not kernel_type.startswith("_")
+            else None
         )
-        # kernel_type comes from the file: only Kernel classes may be constructed, never an
-        # arbitrary callable living in the kernels module.
-        if not (isinstance(kernel_cls, type) and issubclass(kernel_cls, Kernel)):
+        if not (
+            isinstance(kernel_cls, type)
+            and issubclass(kernel_cls, Kernel)
+            and not inspect.isabstract(kernel_cls)
+        ):
             raise DeserializationError(f"Unknown kernel type '{kernel_type}'")
-        deserialized_params = {}
-        for k, v in params.items():
-            if isinstance(v, dict) and "kernel_type" in v:
-                deserialized_params[k] = self._deserialize_kernel(v)
-            else:
-                deserialized_params[k] = v
-        return kernel_cls(**deserialized_params)
+        return kernel_cls(
+            **{
+                k: self._deserialize_kernel_value(v)
+                for k, v in data.get("params", {}).items()
+            }
+        )
+
+    def _deserialize_kernel_value(self, value: Any) -> Any:
+        if isinstance(value, dict) and "kernel_type" in value:
+            return self._deserialize_kernel(value)
+        if isinstance(value, list):
+            return [self._deserialize_kernel_value(v) for v in value]
+        return value
 
     def _serialize_curve_scorer(self, scorer: _CurveScorer) -> Dict[str, Any]:
         # Find the scorer name in sklearn.metrics.get_scorer_names()

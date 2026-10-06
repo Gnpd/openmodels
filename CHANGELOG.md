@@ -84,6 +84,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restored under the wrong attribute name, without its metric or sample weights, and a
   `ball_tree` one couldn't be saved. It now round-trips exactly. Weighted models saved by earlier
   versions load with uniform weights, since their weights were never saved
+- Gaussian-process kernels other than `RBF`, `WhiteKernel`, `Sum`, `Product`, `ConstantKernel`
+  and `DotProduct` (e.g. `Matern`, `RationalQuadratic`, `Exponentiation`, `PairwiseKernel`)
+  loaded as raw dicts when used at top level, breaking `GaussianProcessRegressor`/`Classifier`
+  and `KernelRidge`; kernels with array hyperparameters (a fitted anisotropic `RBF`) or lists of
+  kernels (`CompoundKernel`) couldn't be saved. All now round-trip; an unknown or abstract
+  kernel type raises `DeserializationError`
 
 ## [0.2.2] - 2026-09-22
 
