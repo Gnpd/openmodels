@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metric with `kd_tree`/`ball_tree` returned different neighbors after load. The search tree
   is now rebuilt on load from the estimator's own state, exactly as scikit-learn builds it;
   files written by earlier versions benefit too
+- `run_test_model` test helper (`openmodels/test_helpers.py`): when sparse data was given, it
+  refitted the same instance on it and round-tripped only that sparse fit, so the dense fit
+  (e.g. neighbors search trees) was never tested - which hid the neighbors bug above. Dense and
+  sparse fits are now round-tripped separately, each on its own clone, and the caller's model
+  is no longer fitted
 
 ## [0.2.2] - 2026-09-22
 
