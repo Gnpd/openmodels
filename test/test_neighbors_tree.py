@@ -10,6 +10,7 @@ import json
 import numpy as np
 import pytest
 from scipy.sparse import csr_matrix
+from sklearn.manifold import Isomap, LocallyLinearEmbedding
 from sklearn.neighbors import (
     KNeighborsClassifier,
     KNeighborsRegressor,
@@ -18,6 +19,7 @@ from sklearn.neighbors import (
     NearestNeighbors,
     RadiusNeighborsClassifier,
     RadiusNeighborsRegressor,
+    RadiusNeighborsTransformer,
 )
 
 from openmodels import SerializationManager, SklearnSerializer
@@ -61,7 +63,40 @@ CASES = {
         lambda: KNeighborsTransformer(algorithm="kd_tree"),
         None,
     ),
+    "radius_transformer_kd_manhattan": (
+        lambda: RadiusNeighborsTransformer(
+            radius=1.0, algorithm="kd_tree", metric="manhattan"
+        ),
+        None,
+    ),
+    # BallTree cases (BUG_AUDIT.md #7): the tree isn't written, only rebuilt on load.
+    "knn_classifier_ball_tree": (
+        lambda: KNeighborsClassifier(algorithm="ball_tree"),
+        y,
+    ),
+    "radius_classifier_ball_tree": (
+        lambda: RadiusNeighborsClassifier(radius=1.0, algorithm="ball_tree"),
+        y,
+    ),
+    "nearest_neighbors_ball_tree": (
+        lambda: NearestNeighbors(algorithm="ball_tree"),
+        None,
+    ),
+    "local_outlier_factor_ball_tree": (
+        lambda: LocalOutlierFactor(novelty=True, algorithm="ball_tree"),
+        None,
+    ),
+    "kneighbors_transformer_ball_tree": (
+        lambda: KNeighborsTransformer(algorithm="ball_tree"),
+        None,
+    ),
+    "radius_transformer_ball_tree": (
+        lambda: RadiusNeighborsTransformer(radius=1.0, algorithm="ball_tree"),
+        None,
+    ),
 }
+
+BALL_TREE_CASES = [case for case in CASES if case.endswith("ball_tree")]
 
 
 def _fit(case):
@@ -153,11 +188,47 @@ def test_file_without_rebuild_inputs_still_loads():
     np.testing.assert_array_equal(loaded.predict(X), model.predict(X))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG_AUDIT.md #7: LOF still writes _tree, and a BallTree can't be serialized",
-)
-def test_local_outlier_factor_ball_tree():
-    model = LocalOutlierFactor(novelty=True, algorithm="ball_tree").fit(X)
+@pytest.mark.parametrize("case", BALL_TREE_CASES)
+def test_ball_tree_not_written(case):
+    model = _fit(case)
+    assert model._fit_method == "ball_tree"
+    serialized = SklearnSerializer().serialize(model)
+    assert "_tree" not in serialized["attributes"]
+
+
+def test_auto_haversine_uses_ball_tree_and_roundtrips():
+    coords = rng.rand(40, 2)  # (lat, lon) in radians
+    labels = (coords[:, 0] > 0.5).astype(int)
+    model = KNeighborsClassifier(metric="haversine").fit(coords, labels)
+    assert model._fit_method == "ball_tree"
     loaded = _roundtrip(model)
-    _assert_same_neighbors(loaded, model)
+    np.testing.assert_array_equal(loaded.predict(coords), model.predict(coords))
+    d1, i1 = model.kneighbors(coords)
+    d2, i2 = loaded.kneighbors(coords)
+    np.testing.assert_allclose(d2, d1)
+    np.testing.assert_array_equal(i2, i1)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        Isomap(n_neighbors=5, neighbors_algorithm="ball_tree"),
+        LocallyLinearEmbedding(n_neighbors=8, neighbors_algorithm="ball_tree"),
+    ],
+    ids=["Isomap", "LocallyLinearEmbedding"],
+)
+def test_nested_ball_tree_roundtrips(model):
+    model.fit(X)
+    loaded = _roundtrip(model)
+    np.testing.assert_allclose(loaded.transform(X), model.transform(X))
+
+
+def test_radius_neighbors_transformer_brute_roundtrips():
+    # Its training data (_fit_X) wasn't saved before, so a brute-force model couldn't transform.
+    model = RadiusNeighborsTransformer(radius=1.0).fit(csr_matrix(X))
+    assert model._fit_method == "brute"
+    loaded = _roundtrip(model)
+    np.testing.assert_allclose(
+        loaded.transform(csr_matrix(X)).toarray(),
+        model.transform(csr_matrix(X)).toarray(),
+    )

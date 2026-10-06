@@ -256,7 +256,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "KNNImputer": ["_mask_fit_X", "_valid_mask"],
     "KNeighborsTransformer": ["_fit_method", "_tree", "_fit_X"],
     "PowerTransformer": ["_scaler"],
-    "RadiusNeighborsTransformer": ["_fit_method", "_tree"],
+    "RadiusNeighborsTransformer": ["_fit_method", "_tree", "_fit_X"],
     "SimpleImputer": ["_fit_dtype", "_fill_dtype"],
     "MiniBatchNMF": ["_n_components", "_transform_max_iter", "_beta_loss", "_gamma"],
     "MissingIndicator": ["_n_features", "_precomputed"],
@@ -683,6 +683,15 @@ class SklearnSerializer(
             for key in attribute_keys
             if hasattr(estimator, key)
         }
+
+        # A neighbors estimator's search tree is rebuilt on load from its own state (see
+        # _rebuild_neighbors_tree), so a stored tree is never used. A KDTree is still written
+        # only so openmodels 0.2.2 can read the file; a BallTree can't be serialized and no
+        # older reader could use it, so it's left out.
+        if isinstance(estimator, NeighborsBase) and isinstance(
+            attributes.get("_tree"), BallTree
+        ):
+            del attributes["_tree"]
 
         return attributes
 

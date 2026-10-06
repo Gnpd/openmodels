@@ -75,6 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raw dicts, and discrete ones (`randint`, `poisson`) couldn't be saved at all. Both now
   round-trip, inside `param_distributions` as a dict or a list of dicts, including continuous
   ones in files written by earlier versions
+- Neighbors estimators fitted with a `BallTree` (`algorithm="ball_tree"`, or `auto` with metrics
+  such as `haversine`) couldn't be saved (`TypeError`). They now save and load, including inside
+  `Isomap`/`LocallyLinearEmbedding`; the tree is rebuilt on load rather than stored
+- `RadiusNeighborsTransformer` didn't save its training data, so brute-force models couldn't
+  `transform` after load and non-euclidean `kd_tree` ones gave wrong results
 
 ## [0.2.2] - 2026-09-22
 
