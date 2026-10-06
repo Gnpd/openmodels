@@ -64,7 +64,10 @@ class SerializerMixin:
         self, value: Any, value_type: Any = "none", value_dtype: Optional[str] = None
     ) -> Any:
 
-        if isinstance(value_type, list) and isinstance(value, list):
+        # Type maps hold tuples for tuple values (e.g. a Pipeline step's ("str", "<Class>"))
+        # when the dict stays in memory or goes through pickle; JSON-like formats have already
+        # turned them into lists. Both describe the same nested structure.
+        if isinstance(value_type, (list, tuple)) and isinstance(value, (list, tuple)):
             return [
                 self.convert_from_serializable(v, t, value_dtype)
                 for v, t in zip(value, value_type)

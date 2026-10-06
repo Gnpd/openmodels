@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An unknown estimator class raised a bare `KeyError`; it now raises
   `UnsupportedEstimatorError`. A nested unknown estimator (e.g. a `Pipeline` step) used to load
   silently as a raw dict; it now raises too
+- Composite models (`Pipeline`, `FeatureUnion`, `ColumnTransformer`) saved with
+  `format_name="pickle"` loaded with raw-dict steps and couldn't predict; `VotingClassifier`/
+  `StackingClassifier` predicted, but their `estimators` param held raw dicts, breaking
+  `clone()`. The same happened when deserializing a `serialize()` result directly. Pickle files
+  written by earlier versions now load correctly
 
 ## [0.2.2] - 2026-09-22
 

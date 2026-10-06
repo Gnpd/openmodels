@@ -59,7 +59,7 @@ def _serializer(*classes, **kwargs):
 
 
 def _json(serialized):
-    # Like a real file: tuples in the type maps become lists, which deserialization expects.
+    # Like a real JSON file.
     return json.loads(json.dumps(serialized))
 
 
