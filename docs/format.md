@@ -11,7 +11,8 @@ requirements, and `README.md`'s Security section for the short version.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `estimator_class` | `str` | The model's class name, e.g. `"LogisticRegression"`. Looked up against a registry of known scikit-learn (and registered custom) classes on deserialize. |
+| `estimator_class` | `str` | The model's class name, e.g. `"LogisticRegression"`. Together with `estimator_package`, looked up against a registry of known scikit-learn (and registered custom) classes on deserialize. Nothing named by the file is ever imported: an unregistered class raises `UnsupportedEstimatorError`. |
+| `estimator_package` | `str` | The top-level package the class comes from (`cls.__module__.split(".")[0]`), e.g. `"sklearn"`, `"chemotools"`, or `"__main__"` for a class defined in a script or notebook. Classes are resolved by `(estimator_package, estimator_class)`, so two classes with the same name from different packages (scikit-learn's and chemotools' `MinMaxScaler`) coexist. The top-level package is used rather than the full module path because scikit-learn's real modules are private and get renamed between releases. Since format `4`; a node without it resolves by bare name, with a registered custom class winning over a built-in one of the same name (and a `UserWarning` when the name is ambiguous). |
 | `params` | `dict` | The estimator's constructor parameters, from `model.get_params(deep=False)`. |
 | `param_types` | `dict` | `{param_name: type(value).__name__}` for every entry in `params` - lets the deserializer reconstruct types JSON can't represent natively (e.g. `tuple`). |
 | `param_dtypes` | `dict` | Like `param_types`, but for numpy dtypes specifically (e.g. a `np.dtype` param), when applicable. |
@@ -44,7 +45,7 @@ The autofilled fields fall into four groups:
 | `domain` | `str` | The framework the file is reconstructed into. Currently always `"sklearn"`. Reserved for future non-scikit-learn model serializers. |
 | `domain_version` | `str` | The `domain` framework's version whose attribute layout this file follows - for openmodels-written files, the installed `sklearn.__version__` at serialize time. This is the version the deserialize-time check compares against the installed scikit-learn: any difference in the version string (patch releases included) raises a `UserWarning` listing the tested versions - it never blocks loading. Skipped if absent or `"unknown"`. Files older than format `3` have no `domain_version`; for those only, `producer_version` (which then always held the scikit-learn version) is used instead. |
 | `packages` | `dict` | `{package_name: version}` for every package whose estimator classes appear anywhere in the tree - including the outermost one - plus the `domain` package (`sklearn`), which is always listed. For a plain scikit-learn model this is the single entry `{"sklearn": <version>}`; for a third-party root model or e.g. a `Pipeline` mixing a scikit-learn step with a registered third-party step, it has one entry per distinct package. A class defined in a script or notebook is listed under its module name (e.g. `"__main__"`). Version lookup is best-effort (an already-imported module's own `__version__` attribute, falling back to installed-package metadata, falling back to `"unknown"`) since it must work for packages like scikit-learn itself, whose import name (`sklearn`) differs from its distribution name (`scikit-learn`). On deserialize, every non-`sklearn` entry is compared with the installed version and a mismatch raises a `UserWarning` (entries that are `"unknown"` on either side are skipped). Called `producers` in v2 files, which are still read. |
-| `openmodels_format_version` | `int` | The version of *this wire format's shape*, independent of both `domain_version` and `producer_version` - bumped only when the structure or meaning of the fields documented on this page changes. Currently `3`. A file with no `openmodels_format_version` key predates this field and has version `1`'s flat shape (see "Format history" below); a value newer than what your installed openmodels understands triggers a `UserWarning` (not an error) on deserialize. |
+| `openmodels_format_version` | `int` | The version of *this wire format's shape*, independent of both `domain_version` and `producer_version` - bumped only when the structure or meaning of the fields documented on this page changes. Currently `4`. A file with no `openmodels_format_version` key predates this field and has version `1`'s flat shape (see "Format history" below); a value newer than what your installed openmodels understands triggers a `UserWarning` (not an error) on deserialize. |
 | `created_at` | `str` | ISO 8601 UTC timestamp of when `serialize()` was called. Informational only - not checked at deserialize time, and makes two serializations of an otherwise-identical model no longer byte-identical. |
 | `dependency_versions` | `dict` | The writer's runtime environment at serialize time. openmodels records `{"python": ..., "numpy": ..., "scipy": ...}`: the Python interpreter version (`platform.python_version()`, e.g. `"3.11.9"`) plus the array/sparse-matrix libraries this format's dtype-preserving round trip depends on. Other writers record their own runtime instead (e.g. `{"R": "4.6.1", "jsonlite": "2.0.0"}`). Informational only (not checked) - the serialized dict itself is Python-version-independent; these are for tracing and reproducing the environment that produced a file. |
 
@@ -81,6 +82,7 @@ A fitted `LogisticRegression`, serialized to JSON:
 ```json
 {
   "estimator_class": "LogisticRegression",
+  "estimator_package": "sklearn",
   "params": {
     "C": 1.0, "class_weight": null, "dual": false, "fit_intercept": true,
     "intercept_scaling": 1, "l1_ratio": 0.0, "max_iter": 100, "n_jobs": null,
@@ -111,7 +113,7 @@ A fitted `LogisticRegression`, serialized to JSON:
     "domain": "sklearn",
     "domain_version": "1.9.0",
     "packages": {"sklearn": "1.9.0"},
-    "openmodels_format_version": 3,
+    "openmodels_format_version": 4,
     "created_at": "2026-09-05T12:00:00+00:00",
     "dependency_versions": {"python": "3.11.9", "numpy": "2.1.0", "scipy": "1.14.0"},
     "title": "Customer churn classifier"
@@ -139,7 +141,9 @@ A meta-estimator that holds other estimators - a `Pipeline` step, a `VotingClass
 `estimators`, a `ColumnTransformer`'s `transformers` - doesn't get a special graph
 representation. Wherever a `BaseEstimator` value appears (inside `params` or `attributes`), it's
 serialized recursively as a nested copy of this same dict shape, minus `metadata` - that block is
-root-only, so it's never duplicated across a pipeline's steps. A serialized `Pipeline`
+root-only, so it's never duplicated across a pipeline's steps. Every node, root and nested,
+carries its own `estimator_class`/`estimator_package`, so a `Pipeline` can mix same-named
+classes from different packages. A serialized `Pipeline`
 is a normal JSON tree, not a separate node/edge graph - openmodels reconstructs models by
 calling `set_params()`/rebuilding fitted attributes on the real scikit-learn class, not by
 executing an independent computation graph, so there's no separate graph representation to keep
@@ -158,12 +162,13 @@ registered third-party) estimator tree. Such a writer should fill `metadata` as 
   was written and tested against. openmodels warns when the loading environment differs, which
   is exactly when a hand-written attribute layout may no longer match. If the writer can't name
   a version, omit it rather than writing a placeholder.
-- `openmodels_format_version`: the format version the file follows (`3`).
+- `openmodels_format_version`: the format version the file follows (`4`).
 - `dependency_versions`: the writer's own runtime.
 - `created_at`: as above.
 
-Every `attributes` block also needs its `attribute_types`, and every entry in `params` a
-`param_types` entry.
+Every estimator node needs `estimator_package` next to `estimator_class` (the top-level Python
+package of the class the file targets, e.g. `"sklearn"`). Every `attributes` block also needs its
+`attribute_types`, and every entry in `params` a `param_types` entry.
 
 ```json
 "metadata": {
@@ -172,7 +177,7 @@ Every `attributes` block also needs its `attribute_types`, and every entry in `p
   "domain": "sklearn",
   "domain_version": "1.9.1",
   "packages": {"my_estimators": "0.3.0", "sklearn": "1.9.1"},
-  "openmodels_format_version": 3,
+  "openmodels_format_version": 4,
   "created_at": "2026-09-21T09:23:50Z",
   "dependency_versions": {"R": "4.6.1", "jsonlite": "2.0.0"}
 }
@@ -199,6 +204,13 @@ Every `attributes` block also needs its `attribute_types`, and every entry in `p
   scikit-learn), and read `producers` when `packages` is absent. `openmodels_version` was
   removed: `producer_version` now carries the same information for openmodels-written files
   (v1/v2 files still have it; nothing reads it).
+- **v4**: every estimator node (root and nested) records `estimator_package` next to
+  `estimator_class`, and classes are resolved by `(package, class name)` - before, a registered
+  custom class silently replaced a built-in one with the same name. Files without the field
+  (v1-v3) still resolve by bare name with the old rule (custom class wins), now warning when the
+  name is ambiguous. Type tags in `param_types`/`attribute_types` are unchanged (still the class
+  name), so openmodels 0.2.x readers still load v4 files, with only the "newer format version"
+  warning.
 
 ## Why not ONNX or PMML?
 

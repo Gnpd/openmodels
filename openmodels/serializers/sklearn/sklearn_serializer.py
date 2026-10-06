@@ -5,7 +5,18 @@ This module provides a serializer for scikit-learn models, allowing them to be
 converted to and from dictionary representations.
 """
 
-from typing import Any, Callable, Dict, List, Set, Tuple, Type, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Set,
+    Tuple,
+    Type,
+    Optional,
+    Union,
+)
 from importlib.metadata import version as _package_version, PackageNotFoundError
 from datetime import datetime, timezone
 import platform
@@ -15,7 +26,7 @@ import scipy  # type: ignore
 import inspect
 from scipy.sparse import issparse  # type: ignore
 
-from ._custom_estimator import load_custom_estimators
+from ._custom_estimator import iter_custom_estimators, load_custom_estimators
 
 import sklearn
 from sklearn.calibration import _CalibratedClassifier, _SigmoidCalibration
@@ -46,7 +57,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.utils.discovery import all_estimators
 from sklearn.neighbors import KDTree
 
-from openmodels.exceptions import UnsupportedEstimatorError
+from openmodels.exceptions import DeserializationError, UnsupportedEstimatorError
 from openmodels.protocols import ModelSerializer
 from openmodels.serializers.base import (
     NumpySerializerMixin,
@@ -103,7 +114,18 @@ TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0", "1.9.1"]
 # renamed "packages" (always including the domain package). Readers fall back to
 # producer_version as the scikit-learn version, and to "producers", for v1/v2 files only.
 # openmodels_version was dropped: producer_version holds the same value.
-OPENMODELS_FORMAT_VERSION = 3
+# v4: every estimator node (root and nested) records "estimator_package" (the class's top-level
+# package) next to "estimator_class", and classes are resolved by (package, class name), so
+# same-named classes from different packages coexist. Files without it (v1-v3) resolve by bare
+# name, custom estimators winning. Type tags are unchanged, so v3 readers still load v4 files.
+OPENMODELS_FORMAT_VERSION = 4
+
+
+def _package_of(cls: type) -> str:
+    """Top-level package of a class (e.g. "sklearn", "chemotools", "__main__"). The full
+    module path isn't used: scikit-learn's real modules are private and renamed between
+    releases."""
+    return cls.__module__.split(".")[0]
 
 
 def _openmodels_version() -> str:
@@ -285,6 +307,18 @@ class SklearnSerializer(
         These estimators are merged into the serializer's internal registry for this instance only,
         allowing support for custom or external estimators without affecting the global registry.
 
+        Classes are identified by (top-level package, class name), so a custom class sharing a
+        built-in's name (e.g. chemotools' ``MinMaxScaler``) coexists with it. Only files
+        without ``estimator_package`` (format v1-v3) resolve by bare name, where the custom
+        class wins.
+
+    trusted_function_modules : iterable of str, optional
+        Modules (and their submodules) from which deserialization may import and return
+        functions referenced by the file, e.g. the ``func`` of a ``FunctionTransformer``.
+        By default only already-imported functions from numpy, scipy, scikit-learn and the
+        packages of registered custom estimators are allowed; anything else raises
+        ``DeserializationError``. Functions defined in ``__main__`` are never allowed.
+
     References
     ----------
     .. [1] scikit-learn developer guide:
@@ -321,13 +355,43 @@ class SklearnSerializer(
                 Dict[str, Type[BaseEstimator]],
             ]
         ] = None,
+        trusted_function_modules: Iterable[str] = (),
     ):
+        custom_pairs = (
+            list(iter_custom_estimators(custom_estimators)) if custom_estimators else []
+        )
+        # Wrapped in a list: load_custom_estimators treats each list element as one source.
         extra = (
-            load_custom_estimators(custom_estimators, ALL_ESTIMATORS)
-            if custom_estimators
+            load_custom_estimators([custom_pairs], ALL_ESTIMATORS)
+            if custom_pairs
             else {}
         )
-        self._all_estimators: Dict[str, Type] = {**ALL_ESTIMATORS, **extra}
+        # Bare-name index, custom classes winning: only for files without estimator_package
+        # (format v1-v3). _all_estimators is kept as an alias for anything reading it.
+        self._by_name: Dict[str, Type] = {**ALL_ESTIMATORS, **extra}
+        self._all_estimators = self._by_name
+        # (package, class name) index, built from the raw pairs (not `extra`, which merges
+        # same-named classes from different packages and keys by the caller-supplied name).
+        self._by_id: Dict[Tuple[str, str], Type] = {
+            (_package_of(cls), cls.__name__): cls for cls in ALL_ESTIMATORS.values()
+        }
+        for _, cls in custom_pairs:
+            key = (_package_of(cls), cls.__name__)
+            if key in self._by_id and self._by_id[key] is not cls:
+                warnings.warn(
+                    f"Estimator '{key[0]}.{key[1]}' is registered by two different classes; "
+                    f"preferring the later one.",
+                    UserWarning,
+                )
+            self._by_id[key] = cls
+        self._custom_packages: Set[str] = {
+            _package_of(cls) for _, cls in custom_pairs
+        } - {"__main__"}
+        self._trusted_function_modules: Tuple[str, ...] = tuple(
+            trusted_function_modules
+        )
+        # Bare names already warned about as ambiguous during the current deserialize() call.
+        self._ambiguity_warned: Set[str] = set()
         # Scratch state for one deserialize() call: (node, "prev_leaf_"|"next_leaf_") pairs
         # a Birch _CFNode's leaf-chain pointer couldn't resolve within its own subtree (root_
         # and dummy_leaf_ are independently-deserialized top-level attributes; the pointer
@@ -335,6 +399,48 @@ class SklearnSerializer(
         self._birch_pending_leaf_links: List[Tuple[Any, str]] = []
 
     # --- Helpers ---
+    def _allowed_function_roots(self) -> Set[str]:
+        # Registered custom estimators' packages are already imported, so their functions
+        # (e.g. a package's own score functions) resolve without importing anything.
+        return super()._allowed_function_roots() | self._custom_packages
+
+    def _is_trusted_function_module(self, module_name: str) -> bool:
+        return any(
+            module_name == trusted or module_name.startswith(trusted + ".")
+            for trusted in self._trusted_function_modules
+        )
+
+    def _resolve_class(self, data: Dict[str, Any]) -> Type:
+        """
+        Resolve the class of a serialized estimator node by (package, class name), or by bare
+        name for files without "estimator_package" (format v1-v3, custom estimators winning).
+        Only registered classes are reachable: nothing named by the file is ever imported.
+        """
+        name = data["estimator_class"]
+        package = data.get("estimator_package")
+        if package is not None:
+            cls = self._by_id.get((package, name))
+            if cls is None:
+                raise UnsupportedEstimatorError(
+                    f"{package}.{name} is not registered; install '{package}' and pass it "
+                    f"via custom_estimators"
+                )
+            return cls
+
+        cls = self._by_name.get(name)
+        if cls is None:
+            raise UnsupportedEstimatorError(f"Unknown estimator class '{name}'")
+        if name not in self._ambiguity_warned and (
+            sum(1 for _, other in self._by_id if other == name) > 1
+        ):
+            self._ambiguity_warned.add(name)
+            warnings.warn(
+                f"'{name}' resolved to {_package_of(cls)} (custom estimators win for files "
+                f"without estimator_package); re-save the model to record its package",
+                UserWarning,
+            )
+        return cls
+
     def _check_version(self, stored_version: Optional[str]) -> None:
         """
         Check compatibility between stored scikit-learn version and the current environment.
@@ -566,6 +672,21 @@ class SklearnSerializer(
 
         return attributes
 
+    def convert_from_serializable(
+        self, value: Any, value_type: Any = "none", value_dtype: Optional[str] = None
+    ) -> Any:
+        # Every estimator node goes through _deserialize_core (and so _resolve_class),
+        # whatever its type tag: an unregistered class name has no tag handler and would
+        # otherwise silently come back as a raw dict instead of raising.
+        if (
+            isinstance(value, dict)
+            and "estimator_class" in value
+            and isinstance(value_type, str)
+            and value_type != "dict"
+        ):
+            return self._deserialize_core(value)
+        return super().convert_from_serializable(value, value_type, value_dtype)
+
     # --- Handlers ---
     def _get_serializer_handlers(self):
         # important to run before super() to deal with possible np.ndarray of estimators
@@ -591,8 +712,7 @@ class SklearnSerializer(
         ]
         # Estimators
         estimator_handlers = [
-            (est_name, self._deserialize_core)
-            for est_name in self._all_estimators.keys()
+            (est_name, self._deserialize_core) for est_name in self._by_name.keys()
         ]
 
         kernel_handlers = [
@@ -1074,7 +1194,12 @@ class SklearnSerializer(
         kernel_cls = getattr(
             __import__("sklearn.gaussian_process.kernels", fromlist=[kernel_type]),
             kernel_type,
+            None,
         )
+        # kernel_type comes from the file: only Kernel classes may be constructed, never an
+        # arbitrary callable living in the kernels module.
+        if not (isinstance(kernel_cls, type) and issubclass(kernel_cls, Kernel)):
+            raise DeserializationError(f"Unknown kernel type '{kernel_type}'")
         deserialized_params = {}
         for k, v in params.items():
             if isinstance(v, dict) and "kernel_type" in v:
@@ -1151,6 +1276,7 @@ class SklearnSerializer(
         # Build serializable estimator including extra info
         serialized_estimator = {
             "estimator_class": model.__class__.__name__,
+            "estimator_package": _package_of(type(model)),
             "params": self.convert_to_serializable(params),
             "param_types": param_types,
             "param_dtypes": param_dtypes,
@@ -1198,16 +1324,20 @@ class SklearnSerializer(
         """
         Recursively walk an already-serialized estimator dict (params/attributes, however
         deeply nested) and collect the top-level package name of every estimator class found
-        in it, via the same class registry used to deserialize them - this is what lets a
-        composite estimator mixing packages (e.g. a scikit-learn `Pipeline` with a
-        third-party step) report every package involved, not just the outermost one.
+        in it, from each node's own "estimator_package" - this is what lets a composite
+        estimator mixing packages (e.g. a scikit-learn `Pipeline` with a third-party step)
+        report every package involved, not just the outermost one. Nodes without the field
+        fall back to the bare-name class registry.
         """
         if isinstance(serialized, dict):
             estimator_class = serialized.get("estimator_class")
             if estimator_class is not None:
-                cls = self._all_estimators.get(estimator_class)
-                if cls is not None:
-                    names.add(cls.__module__.split(".")[0])
+                package = serialized.get("estimator_package")
+                if package is None:
+                    cls = self._by_name.get(estimator_class)
+                    package = _package_of(cls) if cls is not None else None
+                if package is not None:
+                    names.add(package)
             for value in serialized.values():
                 self._collect_package_names(value, names)
         elif isinstance(serialized, (list, tuple)):
@@ -1320,6 +1450,7 @@ class SklearnSerializer(
         )
         self._check_format_version(format_version)
 
+        self._ambiguity_warned = set()
         return self._deserialize_core(data)
 
     def _deserialize_core(self, data: Dict[str, Any]) -> BaseEstimator:
@@ -1348,7 +1479,7 @@ class SklearnSerializer(
                 params[key] = tuple(value)
 
         # Get valid constructor arguments for the estimator
-        estimator_cls = self._all_estimators[estimator_class]
+        estimator_cls = self._resolve_class(data)
         valid_args = list(inspect.signature(estimator_cls.__init__).parameters.keys())
         # Remove 'self' if present
         valid_args = [arg for arg in valid_args if arg != "self"]

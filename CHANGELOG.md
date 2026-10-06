@@ -5,6 +5,40 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-10-05
+
+### Security
+
+- **Breaking:** functions referenced by a model file (e.g. a `SelectKBest` `score_func` or a
+  `FunctionTransformer` `func`) are no longer imported from whatever module the file names. A
+  function is only returned if it's a plain function, builtin or NumPy ufunc from an
+  already-imported module of numpy, scipy, scikit-learn or a registered custom estimator's
+  package; private names and `__main__` are refused. Anything else raises
+  `DeserializationError`. Files referencing your own functions need the new
+  `SklearnSerializer(trusted_function_modules=[...])`, which also allows importing those modules
+- A Gaussian-process kernel's `kernel_type` read from a file must now name a `Kernel` class;
+  before, any callable in `sklearn.gaussian_process.kernels` could be called with the file's
+  parameters
+
+### Changed
+
+- **Wire format v4:** every estimator node records `estimator_package` (the class's top-level
+  package) next to `estimator_class`, and classes are resolved by `(package, class name)`.
+  Files without it (v1-v3) resolve by bare name as before, now warning when the name is
+  ambiguous. Type tags are unchanged, so openmodels 0.2.2 still loads v4 files.
+  `openmodels_format_version` is now `4`. See `docs/format.md`
+
+### Fixed
+
+- A registered custom estimator sharing a scikit-learn class's name (e.g. chemotools'
+  `MinMaxScaler`) silently replaced it on load, giving a model with different output. Both now
+  coexist, also inside one `Pipeline`, and so do two custom classes with the same name
+- `metadata.packages` listed a custom estimator's package for models that only used the
+  scikit-learn class with the same name
+- An unknown estimator class raised a bare `KeyError`; it now raises
+  `UnsupportedEstimatorError`. A nested unknown estimator (e.g. a `Pipeline` step) used to load
+  silently as a raw dict; it now raises too
+
 ## [0.2.2] - 2026-09-22
 
 ### Changed

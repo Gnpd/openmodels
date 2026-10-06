@@ -21,7 +21,7 @@ OpenModels ships four output formats with very different trust requirements:
 - **JSON** (`format_name="json"`, the default): the serialized payload is plain data
   (numbers, strings, arrays). Deserializing it does not execute arbitrary code, and it is
   safe to load JSON produced by an untrusted party in the same way loading any other JSON
-  document is.
+  document is (see "Functions referenced by a model" below).
 
 - **MessagePack** (`format_name="msgpack"`, requires the optional `msgpack` package - see
   `pip install openmodels[msgpack]`): the same trust profile as JSON. MessagePack has the
@@ -57,3 +57,20 @@ OpenModels ships four output formats with very different trust requirements:
 
 If you don't have a specific reason to use the pickle format, prefer JSON — it's the
 default, it's human-readable, and it doesn't carry this risk.
+
+### Functions referenced by a model
+
+Some estimators take a function as a parameter, e.g. a `FunctionTransformer`'s `func` or a
+`SelectKBest`'s `score_func`. The file stores these by module and name. Loading never imports
+a module named by the file, and only accepts functions from numpy, scipy, scikit-learn and the
+packages of your registered `custom_estimators`. Any other function reference raises
+`DeserializationError`.
+
+To load models that use your own functions, list their modules explicitly:
+`SklearnSerializer(trusted_function_modules=["mypkg"])`. Those modules (and their submodules)
+may then be imported while loading, so only list code you trust. Functions defined in a script
+or notebook (`__main__`) are never accepted.
+
+Loading a model doesn't call these functions, but using it does: `predict`/`transform`/`fit` on
+a model from an untrusted source run whichever allowed function the file chose. Treat such a
+model's outputs as untrusted.

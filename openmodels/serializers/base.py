@@ -7,13 +7,24 @@ Each mixin implements handlers for specific types, allowing easy extension and m
 support for new serialization targets.
 """
 
+import importlib
+import inspect
+import sys
+from types import ModuleType
+
 import numpy as np
 from scipy.sparse import csr_matrix, csc_matrix, csr_array, csc_array  # type: ignore
 from scipy.interpolate import interp1d, BSpline  # type: ignore
 from scipy.stats._distn_infrastructure import rv_continuous_frozen  # type: ignore
 import scipy.stats  # type: ignore
 
-from typing import Any, Optional, Callable, Dict
+from typing import Any, Optional, Callable, Dict, Set
+
+from openmodels.exceptions import DeserializationError
+
+# Top-level packages whose (already-imported) functions a model file may reference, e.g. a
+# SelectKBest score_func such as sklearn.feature_selection.chi2.
+DEFAULT_FUNCTION_ROOTS = frozenset({"numpy", "scipy", "sklearn"})
 
 
 class SerializerMixin:
@@ -103,10 +114,52 @@ class SerializerMixin:
             "name": func.__name__,
         }
 
+    def _allowed_function_roots(self) -> Set[str]:
+        """Top-level packages whose already-imported modules may provide deserialized
+        functions. Subclasses extend this (e.g. with the packages of registered estimators).
+        """
+        return set(DEFAULT_FUNCTION_ROOTS)
+
+    def _is_trusted_function_module(self, module_name: str) -> bool:
+        """Whether the user explicitly trusted this module, allowing it to be imported.
+        Nothing is trusted by default."""
+        return False
+
     def _deserialize_function(self, data: Dict[str, str]) -> Callable:
-        """Deserialize a Python function from its module and name."""
-        module = __import__(data["module"], fromlist=[data["name"]])
-        return getattr(module, data["name"])
+        """
+        Deserialize a Python function from its module and name.
+
+        The file names the module, so it is untrusted: the function is only looked up in a
+        module that is already imported and belongs to an allowed top-level package
+        (`_allowed_function_roots`), and only modules the user explicitly trusted
+        (`_is_trusted_function_module`) may be imported. Importing an arbitrary module would
+        run its import-time side effects. Private names, ``__main__`` modules and anything
+        that isn't a plain function, builtin or NumPy ufunc are refused.
+        """
+        module_name, name = data.get("module"), data.get("name")
+        obj = None
+        if (
+            isinstance(module_name, str)
+            and isinstance(name, str)
+            and not name.startswith("_")
+            and "__main__" not in module_name.split(".")
+        ):
+            module: Optional[ModuleType] = None
+            if self._is_trusted_function_module(module_name):
+                module = importlib.import_module(module_name)
+            elif module_name.split(".")[0] in self._allowed_function_roots():
+                module = sys.modules.get(module_name)
+            obj = getattr(module, name, None) if module is not None else None
+        if not (
+            inspect.isfunction(obj)
+            or inspect.isbuiltin(obj)
+            or isinstance(obj, np.ufunc)
+        ):
+            raise DeserializationError(
+                f"function '{module_name}.{name}' is not allowed; pass "
+                f"trusted_function_modules=[...] to permit it"
+            )
+        return obj
 
     def _deserialize_dict(self, value: Any) -> Any:
         """Deserialize a dict, restoring non-string key types for the envelope produced by
