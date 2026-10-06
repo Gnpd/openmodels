@@ -330,6 +330,8 @@ class SklearnSerializer(
         By default only already-imported functions from numpy, scipy, scikit-learn and the
         packages of registered custom estimators are allowed; anything else raises
         ``DeserializationError``. Functions defined in ``__main__`` are never allowed.
+        Trusting ``"builtins"`` (e.g. for ``func=abs``) makes every builtin loadable,
+        including ``eval``, ``exec`` and ``open``.
 
     References
     ----------

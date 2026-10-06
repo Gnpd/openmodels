@@ -21,11 +21,31 @@ import scipy.stats  # type: ignore
 
 from typing import Any, Optional, Callable, Dict, Set
 
-from openmodels.exceptions import DeserializationError
+from openmodels.exceptions import DeserializationError, SerializationError
 
 # Top-level packages whose (already-imported) functions a model file may reference, e.g. a
 # SelectKBest score_func such as sklearn.feature_selection.chi2.
 DEFAULT_FUNCTION_ROOTS = frozenset({"numpy", "scipy", "sklearn"})
+
+# Type of NumPy's array functions (np.mean, np.std, np.linalg.norm, ...).
+_NUMPY_ARRAY_FUNCTION_TYPE = type(np.mean)
+
+# Modules searched for a function that doesn't record its own `__module__` (SciPy's ufuncs,
+# e.g. scipy.special.expit). Only already-imported modules are searched.
+_FUNCTION_MODULE_CANDIDATES = ("numpy", "scipy.special")
+
+
+def _find_function_module(func: Any) -> Optional[str]:
+    """Name of the module (among `_FUNCTION_MODULE_CANDIDATES`) that exposes `func` under its
+    own `__name__`, or None."""
+    name = getattr(func, "__name__", None)
+    if not isinstance(name, str):
+        return None
+    for module_name in _FUNCTION_MODULE_CANDIDATES:
+        if getattr(sys.modules.get(module_name), name, None) is func:
+            return module_name
+    return None
+
 
 # Python builtin types a type-valued param (e.g. `dtype=float`) may name; NumPy scalar types
 # are resolved separately (see SerializerMixin._deserialize_type).
@@ -135,10 +155,13 @@ class SerializerMixin:
 
     def _serialize_function(self, func: Callable) -> Dict[str, str]:
         """Serialize a Python function by its module and name."""
-        return {
-            "module": func.__module__,
-            "name": func.__name__,
-        }
+        name = getattr(func, "__name__", None)
+        module = getattr(func, "__module__", None) or _find_function_module(func)
+        if not isinstance(name, str) or module is None:
+            raise SerializationError(
+                f"Can't serialize callable {func!r}: it has no importable module and name"
+            )
+        return {"module": module, "name": name}
 
     def _allowed_function_roots(self) -> Set[str]:
         """Top-level packages whose already-imported modules may provide deserialized
@@ -222,6 +245,10 @@ class SerializerMixin:
             ("tuple", tuple),
             ("dict", self._deserialize_dict),
             ("function", self._deserialize_function),
+            # NumPy ufuncs (np.log1p, scipy.special.expit) and C builtins (abs) are tagged by
+            # their own type name; _deserialize_function accepts both under the allowlist.
+            ("ufunc", self._deserialize_function),
+            ("builtin_function_or_method", self._deserialize_function),
         ]
 
 
@@ -242,14 +269,6 @@ class NumpySerializerMixin(SerializerMixin):
                 return "float64"  # Use float64 for float lists
         return ""
 
-    _POOLING_FUNC_REGISTRY = {
-        "mean": np.mean,
-        "median": np.median,
-        "max": np.max,
-        "min": np.min,
-        "sum": np.sum,
-    }
-
     # --- NumPy specific serializers/deserializers ---
     def _serialize_ndarray(self, value: np.ndarray):
         return self.convert_to_serializable(value.tolist())
@@ -263,18 +282,37 @@ class NumpySerializerMixin(SerializerMixin):
         return rs
 
     def _serialize_numpy_function(self, value):
-        # Only handle known numpy functions
-        for name, func in self._POOLING_FUNC_REGISTRY.items():
-            if value is func:
-                return {"numpy_function": name}
-        # fallback: use __name__ if possible
-        return {"numpy_function": getattr(value, "__name__", None)}
+        # NumPy array functions (np.std, np.linalg.norm, ...). The module is recorded because
+        # the name alone can't find submodule functions (and np.fft is a module, not np.fft.fft).
+        name = getattr(value, "__name__", None)
+        if not isinstance(name, str):
+            raise SerializationError(
+                f"Can't serialize NumPy function {value!r}: no name"
+            )
+        return {"numpy_function": name, "module": value.__module__}
 
     def _deserialize_numpy_function(self, value, value_dtype=None):
+        """
+        Resolve a NumPy array function by name, from its recorded module (`"numpy"` for files
+        written before the module was recorded). Only already-imported `numpy` modules are
+        searched (nothing is imported), private names are refused, and the result must be a
+        NumPy array function, which rules out modules (e.g. `np.fft`), classes and the like.
+        """
         name = value.get("numpy_function")
-        if name in self._POOLING_FUNC_REGISTRY:
-            return self._POOLING_FUNC_REGISTRY[name]
-        raise ValueError(f"Unknown numpy function: {name}")
+        module_name = value.get("module", "numpy")
+        obj = None
+        if (
+            isinstance(name, str)
+            and not name.startswith("_")
+            and isinstance(module_name, str)
+            and module_name.split(".")[0] == "numpy"
+        ):
+            obj = getattr(sys.modules.get(module_name), name, None)
+        if not isinstance(obj, _NUMPY_ARRAY_FUNCTION_TYPE):
+            raise DeserializationError(
+                f"Unknown NumPy function '{module_name}.{name}' in the model file"
+            )
+        return obj
 
     # --- Handlers ---
     def _get_serializer_handlers(self):

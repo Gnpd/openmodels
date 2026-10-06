@@ -58,6 +58,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OneHotEncoder(dtype=np.float32)` produced float64 output. They now load as the original
   NumPy type, including from files written by earlier versions. An unknown type name still
   loads as `float`, but now with a `UserWarning`
+- Functions passed as parameters: NumPy ufuncs (e.g. `FunctionTransformer(func=np.log1p)`,
+  `TransformedTargetRegressor(func=np.log1p, inverse_func=np.expm1)`) loaded as raw dicts and
+  failed at `transform`; SciPy ufuncs such as `scipy.special.expit`/`logit` couldn't be saved at
+  all; and NumPy array functions other than mean/median/max/min/sum (e.g. `np.std`, `np.clip`,
+  `np.linalg.norm`) were saved but could never be loaded. All of these now load as the original
+  function, including files written by earlier versions (except submodule functions such as
+  `np.linalg.norm`, whose module older files didn't record). Builtins like `abs` now raise a
+  clear `DeserializationError` (they're outside the function allowlist; opt in with
+  `trusted_function_modules`), and a callable that can't be located now fails at save with
+  `SerializationError` instead of `AttributeError`
 
 ## [0.2.2] - 2026-09-22
 
