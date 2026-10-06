@@ -55,7 +55,11 @@ from sklearn.tree._tree import Tree
 from sklearn.base import BaseEstimator, check_is_fitted
 from sklearn.exceptions import NotFittedError
 from sklearn.utils.discovery import all_estimators
-from sklearn.neighbors import KDTree
+from sklearn.neighbors import BallTree, KDTree
+
+# Private, but its tree-building code (NeighborsBase._fit) is identical across TESTED_VERSIONS;
+# see _rebuild_neighbors_tree.
+from sklearn.neighbors._base import NeighborsBase
 
 from openmodels.exceptions import DeserializationError, UnsupportedEstimatorError
 from openmodels.protocols import ModelSerializer
@@ -66,6 +70,14 @@ from openmodels.serializers.base import (
 import warnings
 
 ConverterFunc = Callable[[Any], Any]
+
+# Fitted attributes a neighbors estimator's search tree is rebuilt from on load.
+_NEIGHBORS_TREE_INPUTS = (
+    "_fit_X",
+    "_fit_method",
+    "effective_metric_",
+    "effective_metric_params_",
+)
 
 LOSS_CLASS_REGISTRY = {
     "AbsoluteError": AbsoluteError,
@@ -1112,6 +1124,35 @@ class SklearnSerializer(
         # Create KDTree with data - the tree will be rebuilt automatically
         return KDTree(data)
 
+    def _rebuild_neighbors_tree(self, model: BaseEstimator) -> None:
+        """
+        Rebuild a neighbors estimator's search tree (`_tree`) from its own fitted state,
+        exactly as `NeighborsBase._fit` builds it: `KDTree`/`BallTree` over `_fit_X` with
+        `leaf_size`, `effective_metric_` and `effective_metric_params_`. The tree is
+        deterministic in those inputs, so the result is identical to the original.
+
+        Rebuilding instead of restoring a stored tree means files never need to carry one:
+        regressors never stored `_tree` at all, and the trees older files did store were
+        rebuilt as `KDTree(data)`, dropping the metric and leaf_size (wrong neighbors for any
+        non-euclidean metric). Models fitted with `brute` (e.g. on sparse data) have no tree,
+        and files missing any of the inputs are left as they are.
+        """
+        if not isinstance(model, NeighborsBase) or not all(
+            hasattr(model, attr) for attr in _NEIGHBORS_TREE_INPUTS
+        ):
+            return
+        fit_method = model._fit_method
+        if fit_method not in ("kd_tree", "ball_tree"):
+            model._tree = None  # "brute", as NeighborsBase._fit sets it
+            return
+        tree_cls = KDTree if fit_method == "kd_tree" else BallTree
+        model._tree = tree_cls(
+            model._fit_X,
+            model.leaf_size,
+            metric=model.effective_metric_,
+            **model.effective_metric_params_,
+        )
+
     def _serialize_estimators_collection(
         self, value: Union[np.ndarray, List[BaseEstimator]]
     ) -> List[Any]:
@@ -1506,10 +1547,17 @@ class SklearnSerializer(
         if "attributes" not in data:
             return model  # Unfitted model
 
+        # A neighbors estimator's search tree is rebuilt after the loop from the estimator's
+        # own state; a stored one (which lacks the metric and leaf_size) isn't loaded then.
+        rebuilds_tree = isinstance(model, NeighborsBase) and all(
+            key in data["attributes"] for key in _NEIGHBORS_TREE_INPUTS
+        )
         for attribute, value in data["attributes"].items():
             attr_type = data["attribute_types"].get(attribute)
             attr_dtype = data.get("attribute_dtypes", {}).get(attribute) or None
 
+            if attribute == "_tree" and rebuilds_tree:
+                continue
             # Handle tree_ separately
             if attr_type == "Tree":
                 model.tree_ = self._deserialize_tree(value)
@@ -1527,5 +1575,6 @@ class SklearnSerializer(
 
         if estimator_class == "Birch" and self._birch_pending_leaf_links:
             self._resolve_birch_leaf_links()
+        self._rebuild_neighbors_tree(model)
 
         return model

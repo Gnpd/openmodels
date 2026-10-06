@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StackingClassifier` predicted, but their `estimators` param held raw dicts, breaking
   `clone()`. The same happened when deserializing a `serialize()` result directly. Pickle files
   written by earlier versions now load correctly
+- `KNeighborsRegressor`/`RadiusNeighborsRegressor` couldn't predict after load when fitted with
+  a tree (the default for dense data), and every neighbors estimator using a non-euclidean
+  metric with `kd_tree`/`ball_tree` returned different neighbors after load. The search tree
+  is now rebuilt on load from the estimator's own state, exactly as scikit-learn builds it;
+  files written by earlier versions benefit too
 
 ## [0.2.2] - 2026-09-22
 
