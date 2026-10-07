@@ -98,6 +98,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slices inside dicts (such as `output_indices_`) now come back as slices too
 - `make_column_selector` column selections can now be saved, including NumPy dtype classes
   such as `np.number`
+- `SerializationManager.serialize/deserialize/save/load` now raise
+  `SerializationError`/`DeserializationError` (with the original exception as the cause) for
+  malformed input or unserializable models, as documented, instead of `KeyError`,
+  `AttributeError` or `TypeError`. Library errors such as `UnsupportedEstimatorError` are
+  unchanged
 
 ## [0.2.2] - 2026-09-22
 

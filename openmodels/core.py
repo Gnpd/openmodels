@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional, Union
 from pathlib import Path
 from .protocols import ModelSerializer
 from .format_registry import FormatRegistry
-from .exceptions import SerializationError, DeserializationError
+from .exceptions import OpenModelsError, SerializationError, DeserializationError
 
 
 class SerializationManager:
@@ -66,7 +66,8 @@ class SerializationManager:
         ------
         SerializationError
             If the model serializer doesn't return a dictionary or if there's an error during
-            serialization.
+            serialization (e.g. the model isn't an estimator or holds a value the format can't
+            encode). The original exception, if any, is kept as ``__cause__``.
         UnsupportedFormatError
             If the specified format is not supported.
 
@@ -80,7 +81,12 @@ class SerializationManager:
         ... )
         """
         converter = FormatRegistry.get_converter(format_name)
-        serialized_dict = self.model_serializer.serialize(model)
+        try:
+            serialized_dict = self.model_serializer.serialize(model)
+        except OpenModelsError:
+            raise
+        except Exception as e:
+            raise SerializationError(f"Error during serialization: {e}") from e
         if not isinstance(serialized_dict, dict):
             raise SerializationError(
                 f"Model serializer must return a dict, got {type(serialized_dict)}"
@@ -90,7 +96,12 @@ class SerializationManager:
                 **metadata,
                 **serialized_dict.get("metadata", {}),
             }
-        return converter.serialize_to_format(serialized_dict)
+        try:
+            return converter.serialize_to_format(serialized_dict)
+        except OpenModelsError:
+            raise
+        except Exception as e:
+            raise SerializationError(f"Error during serialization: {e}") from e
 
     def deserialize(self, serialized_model: Any, format_name: str = "json") -> Any:
         """
@@ -112,7 +123,10 @@ class SerializationManager:
         ------
         DeserializationError
             If the format converter doesn't return a dictionary or if there's an error during
-            deserialization.
+            deserialization (e.g. malformed data). The original exception, if any, is kept as
+            ``__cause__``.
+        UnsupportedEstimatorError
+            If the data names an estimator class that is unknown or not supported.
         UnsupportedFormatError
             If the specified format_name is not supported.
 
@@ -125,13 +139,20 @@ class SerializationManager:
         converter = FormatRegistry.get_converter(format_name)
         try:
             deserialized_dict = converter.deserialize_from_format(serialized_model)
+        except OpenModelsError:
+            raise
         except Exception as e:
-            raise DeserializationError(f"Error during deserialization: {e}")
+            raise DeserializationError(f"Error during deserialization: {e}") from e
         if not isinstance(deserialized_dict, dict):
             raise DeserializationError(
                 f"Format converter must return a dict, got {type(deserialized_dict)}"
             )
-        return self.model_serializer.deserialize(deserialized_dict)
+        try:
+            return self.model_serializer.deserialize(deserialized_dict)
+        except OpenModelsError:
+            raise
+        except Exception as e:
+            raise DeserializationError(f"Error during deserialization: {e}") from e
 
     def save(
         self,
@@ -204,6 +225,8 @@ class SerializationManager:
         ------
         DeserializationError
             If deserialization or file I/O fails.
+        UnsupportedEstimatorError
+            If the file names an estimator class that is unknown or not supported.
         UnsupportedFormatError
             If the specified format is not supported.
 
