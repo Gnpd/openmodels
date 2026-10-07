@@ -103,6 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   malformed input or unserializable models, as documented, instead of `KeyError`,
   `AttributeError` or `TypeError`. Library errors such as `UnsupportedEstimatorError` are
   unchanged
+- `custom_estimators=[("Name", cls), ...]` (a list of pairs, as documented) registered nothing;
+  it now works, alongside the existing forms
 
 ## [0.2.2] - 2026-09-22
 

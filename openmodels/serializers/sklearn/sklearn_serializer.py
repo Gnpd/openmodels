@@ -308,6 +308,8 @@ class SklearnSerializer(
         - A callable returning an iterable or dict of (name, class) pairs (e.g., a function like ``all_estimators``).
         - A list or tuple of (name, class) pairs.
         - A dict mapping estimator names to their classes.
+        - A single (name, class) pair, or a list mixing any of the above (e.g.
+          ``[("MyEstimator", MyEstimator), all_estimators]``).
 
         These estimators are merged into the serializer's internal registry for this instance only,
         allowing support for custom or external estimators without affecting the global registry.

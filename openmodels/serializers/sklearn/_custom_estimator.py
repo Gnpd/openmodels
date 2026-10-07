@@ -18,13 +18,26 @@ def is_valid_estimator(name: str, cls: Any) -> bool:
         return False
 
 
+def _is_pair(item: Any) -> bool:
+    """Whether `item` has the shape of one (name, class) pair rather than a source of pairs.
+    No source (a callable, a dict or an iterable of pairs) starts with a string, so a
+    2-item tuple/list starting with one is a pair; its class is validated later."""
+    return (
+        isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str)
+    )
+
+
 def normalize_estimators(
     estimators: Union[Callable[..., Any], List[Any], Tuple[Any, ...], Dict[str, Any]],
 ) -> List[Any]:
-    """Normalize input into a flat list of estimators or (name, class) items."""
+    """Normalize input into a flat list of sources, each a callable, a dict or an iterable of
+    (name, class) pairs. A single pair, or a pair given as an element of a list of sources, is
+    wrapped into a one-pair source of its own."""
+    if _is_pair(estimators):
+        return [[estimators]]
     if not isinstance(estimators, (list, tuple, set)):
         return [estimators]
-    return list(estimators)
+    return [[est] if _is_pair(est) else est for est in estimators]
 
 
 def iter_custom_estimators(
@@ -44,10 +57,11 @@ def iter_custom_estimators(
         if items is None:
             continue
 
-        if isinstance(items, dict):
-            iterator = items.items()
-        else:
-            iterator = items
+        try:
+            iterator = iter(items.items() if isinstance(items, dict) else items)
+        except TypeError:
+            warnings.warn("Unexpected custom_estimator format; skipping.", UserWarning)
+            continue
 
         for item in iterator:
             try:

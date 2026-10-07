@@ -1,6 +1,11 @@
 import inspect
-from openmodels.serializers.sklearn import _custom_estimator
 import warnings
+
+import pytest
+from sklearn.base import BaseEstimator
+
+from openmodels.serializers.sklearn import _custom_estimator
+from openmodels.serializers.sklearn.sklearn_serializer import SklearnSerializer
 
 
 class DummyEstimator:
@@ -148,3 +153,83 @@ def test_is_valid_estimator_typeerror_branch(monkeypatch):
     dummy_instance = Dummy()
     result = _custom_estimator.is_valid_estimator("BadEstimator", dummy_instance)
     assert result is False
+
+# ==== (name, class) pairs (BUG_AUDIT #19) ====
+
+
+class PairEstimatorA(BaseEstimator):
+    pass
+
+
+class PairEstimatorB(BaseEstimator):
+    pass
+
+
+def _pair_sources():
+    return [("PairEstimatorB", PairEstimatorB)]
+
+
+def _registered(serializer):
+    return {name: cls for name, cls in serializer._by_name.items() if cls in (PairEstimatorA, PairEstimatorB)}
+
+
+def _no_warnings(fn):
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        return fn()
+
+
+@pytest.mark.parametrize(
+    "custom",
+    [
+        [("PairEstimatorA", PairEstimatorA), ("PairEstimatorB", PairEstimatorB)],
+        (("PairEstimatorA", PairEstimatorA), ("PairEstimatorB", PairEstimatorB)),
+        [("PairEstimatorA", PairEstimatorA), _pair_sources],
+        [["PairEstimatorA", PairEstimatorA], {"PairEstimatorB": PairEstimatorB}],
+    ],
+    ids=["list_of_pairs", "tuple_of_pairs", "pair_and_callable", "list_pair_and_dict"],
+)
+def test_serializer_registers_pairs(custom):
+    serializer = _no_warnings(lambda: SklearnSerializer(custom_estimators=custom))
+    assert _registered(serializer) == {"PairEstimatorA": PairEstimatorA, "PairEstimatorB": PairEstimatorB}
+
+
+def test_serializer_registers_single_pair():
+    serializer = _no_warnings(lambda: SklearnSerializer(custom_estimators=("PairEstimatorA", PairEstimatorA)))
+    assert _registered(serializer) == {"PairEstimatorA": PairEstimatorA}
+
+
+@pytest.mark.parametrize(
+    "custom",
+    [
+        _pair_sources,
+        {"PairEstimatorB": PairEstimatorB},
+        [{"PairEstimatorA": PairEstimatorA}, {"PairEstimatorB": PairEstimatorB}],
+        [lambda: [("PairEstimatorA", PairEstimatorA)], _pair_sources],
+    ],
+    ids=["callable", "dict", "list_of_dicts", "list_of_callables"],
+)
+def test_existing_source_forms_still_register(custom):
+    serializer = _no_warnings(lambda: SklearnSerializer(custom_estimators=custom))
+    expected = {"PairEstimatorB": PairEstimatorB}
+    if not callable(custom) and not isinstance(custom, dict):
+        expected["PairEstimatorA"] = PairEstimatorA
+    assert _registered(serializer) == expected
+
+
+def test_normalize_estimators_wraps_pairs():
+    pair_a = ("PairEstimatorA", PairEstimatorA)
+    assert _custom_estimator.normalize_estimators(pair_a) == [[pair_a]]
+    assert _custom_estimator.normalize_estimators([pair_a, _pair_sources]) == [[pair_a], _pair_sources]
+
+
+def test_pair_with_invalid_class_is_skipped_silently():
+    result = _no_warnings(lambda: _custom_estimator.load_custom_estimators([("Bad", NotEstimator)], {}))
+    assert result == {}
+
+
+@pytest.mark.parametrize("element", [42, ["badformat"]], ids=["not_iterable", "not_a_pair"])
+def test_malformed_element_warns(element):
+    with pytest.warns(UserWarning, match="Unexpected custom_estimator format"):
+        result = _custom_estimator.load_custom_estimators([("PairEstimatorA", PairEstimatorA), element], {})
+    assert result == {"PairEstimatorA": PairEstimatorA}
