@@ -149,6 +149,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values are now typed per key and restored exactly, including in dicts with non-string keys;
   re-save older files. Tuple dict keys, which saved but failed on load, now raise
   `SerializationError` at save; so does a dict holding keys with the same text (`1` and `"1"`)
+- NumPy scalar values (e.g. `Ridge(alpha=np.float32(0.5))`, or an `np.int64` class label)
+  loaded as Python `float`/`int`; only `np.float64` kept its type. Every NumPy integer and float
+  scalar type now loads as itself, for files written by earlier versions too. `np.bool_` values
+  are now tagged `"bool_"` (NumPy 2 names the type `"bool"`, like Python's), so they load as
+  `np.bool_`; earlier readers load them as Python `bool`, as before
 
 ### Added
 

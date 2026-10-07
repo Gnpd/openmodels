@@ -705,6 +705,9 @@ class SklearnSerializer(
             # via the csr_matrix(value) constructor, so type(item).__name__ (e.g. "csr_array")
             # would tag a value the deserializer dispatch table has no matching entry for.
             return "csr_matrix"
+        elif isinstance(item, np.bool_):
+            # NumPy 2 names the type "bool", the tag of Python's bool; NumPy 1 named it "bool_".
+            return "bool_"
         else:
             # Return the type name if it's not a list or it's an empty list
             return type(item).__name__

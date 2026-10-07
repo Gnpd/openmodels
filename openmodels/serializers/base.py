@@ -61,6 +61,22 @@ _BUILTIN_TYPES: Dict[str, type] = {
     for t in (int, float, bool, str, bytes, complex, tuple, list, dict, object)
 }
 
+# NumPy's integer and float scalar types by name (int8 ... uint64, float16 ... float64, ...),
+# for scalar values, which are tagged with `type(value).__name__` and written as their
+# `.item()`. Some names depend on the platform (np.longlong is "int64" on Windows and
+# "longlong" on Linux), so the C names are added for files written elsewhere. np.bool_ values
+# are tagged "bool_" (see SklearnSerializer._get_nested_types), as NumPy 2 names it "bool".
+_NUMPY_SCALAR_TYPES: Dict[str, type] = {
+    t.__name__: t
+    for t in (
+        np.dtype(code).type
+        for code in np.typecodes["AllInteger"] + np.typecodes["Float"]
+    )
+}
+for _name in ("intc", "uintc", "longlong", "ulonglong", "longdouble"):
+    _NUMPY_SCALAR_TYPES.setdefault(_name, getattr(np, _name))
+_NUMPY_SCALAR_TYPES["bool_"] = np.bool_
+
 
 def _key_to_text(key: Any) -> str:
     """
@@ -310,9 +326,9 @@ class SerializerMixin:
             if key_type == "NoneType" and text == "None":
                 return None
             if key_type in ("bool", "bool_") and text in ("True", "False"):
-                return text == "True"
-            if key_type.startswith(("int", "uint")):
-                parsed: Any = int(text)
+                parsed: Any = text == "True"
+            elif key_type.startswith(("int", "uint")):
+                parsed = int(text)
             elif key_type.startswith("float"):
                 parsed = float(text)
             else:
@@ -477,9 +493,7 @@ class NumpySerializerMixin(SerializerMixin):
         return [
             ("ndarray", self._deserialize_ndarray),
             ("generic", lambda v: np.array(v).item()),
-            ("float64", np.float64),
-            ("int32", int),
-            ("int64", int),
+            *_NUMPY_SCALAR_TYPES.items(),
             ("dtype", np.dtype),
             ("Float64DType", np.dtype),
             ("RandomState", self._deserialize_randomstate),
