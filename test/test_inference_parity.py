@@ -128,16 +128,7 @@ NOT_INFERENCE: Dict[str, str] = {
 
 # Known, understood parity gaps: (estimator, method) -> reason. Each must still fail; once it
 # passes, the test asks for the entry to be removed.
-KNOWN_GAPS: Dict[tuple, str] = {
-    (
-        "GridSearchCV",
-        "score",
-    ): "scorer_ isn't saved; it should be rebuilt from `scoring` on load",
-    (
-        "RandomizedSearchCV",
-        "score",
-    ): "scorer_ isn't saved; it should be rebuilt from `scoring` on load",
-}
+KNOWN_GAPS: Dict[tuple, str] = {}
 
 # ==== data ====
 

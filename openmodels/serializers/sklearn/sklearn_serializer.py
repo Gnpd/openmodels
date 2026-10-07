@@ -50,7 +50,7 @@ from sklearn._loss.loss import (
     PinballLoss,
     BaseLoss,
 )
-from sklearn.metrics._scorer import _CurveScorer
+from sklearn.metrics._scorer import _CurveScorer, _MultimetricScorer
 from sklearn.metrics import get_scorer_names, get_scorer
 from sklearn.multiclass import _ConstantPredictor
 from sklearn.tree._tree import Tree
@@ -67,6 +67,10 @@ from sklearn.ensemble import (
 # Private, but its tree-building code (NeighborsBase._fit) is identical across TESTED_VERSIONS;
 # see _rebuild_neighbors_tree.
 from sklearn.neighbors._base import NeighborsBase
+
+# Private, but `_get_scorers` (how fit builds scorer_ from `scoring`) is identical across
+# TESTED_VERSIONS; see _rebuild_derived_attributes.
+from sklearn.model_selection._search import BaseSearchCV
 
 from openmodels.exceptions import DeserializationError, UnsupportedEstimatorError
 from openmodels.protocols import ModelSerializer
@@ -706,6 +710,12 @@ class SklearnSerializer(
         ):
             del attributes["_tree"]
 
+        # A search's scorer_ is rebuilt on load from its `scoring` param (see
+        # _rebuild_derived_attributes). Scorer objects can't be written: a multi-metric
+        # scorer_ (a dict of them) made saving fail.
+        if isinstance(estimator, BaseSearchCV):
+            attributes.pop("scorer_", None)
+
         return attributes
 
     def convert_from_serializable(
@@ -1228,6 +1238,9 @@ class SklearnSerializer(
           saved). `sample_weight` only changes the loss during training, never its link.
         - `HistGradientBoosting*._n_features`, needed by `staged_predict*`: the input width.
         - `LinearDiscriminantAnalysis._max_components`, needed by `transform`.
+        - A search's (`GridSearchCV`, ...) `scorer_`, needed by `score`: built from its `scoring`
+          param by `_get_scorers`, as `fit` does. It's never saved (see
+          `_extract_estimator_attributes`).
         """
         if isinstance(
             model, (HistGradientBoostingClassifier, HistGradientBoostingRegressor)
@@ -1244,6 +1257,15 @@ class SklearnSerializer(
             max_components = min(len(model.classes_) - 1, model.n_features_in_)
             model._max_components = (
                 max_components if model.n_components is None else model.n_components
+            )
+        if (
+            isinstance(model, BaseSearchCV)
+            and hasattr(model, "multimetric_")
+            and not hasattr(model, "scorer_")
+        ):
+            scorers, _ = model._get_scorers()
+            model.scorer_ = (
+                scorers._scorers if isinstance(scorers, _MultimetricScorer) else scorers
             )
 
     def _serialize_estimators_collection(

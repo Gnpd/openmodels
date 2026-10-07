@@ -1,6 +1,6 @@
 """
-Private attributes that fitted estimators need after loading for methods other than
-predict/transform. Each used to be missing, so the method raised on the loaded copy while
+Fitted state, mostly private attributes, that estimators need after loading for methods other
+than predict/transform. Each used to be missing, so the method raised on the loaded copy while
 predict kept working, which is all the smoke tests compare.
 """
 
@@ -17,12 +17,14 @@ from sklearn.ensemble import (
     HistGradientBoostingRegressor,
     VotingClassifier,
 )
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.metrics import make_scorer, mean_absolute_error
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from sklearn.pipeline import make_pipeline
 from sklearn.utils.discovery import all_estimators
 
 from openmodels.core import SerializationManager
-from openmodels.exceptions import DeserializationError
+from openmodels.exceptions import DeserializationError, SerializationError
 from openmodels.serializers.sklearn.sklearn_serializer import SklearnSerializer
 from test._estimator_construction import construct
 
@@ -175,3 +177,56 @@ def test_invalid_structured_dtype_is_refused(bad_dtype):
     data["attribute_dtypes"]["_single_linkage_tree_"] = bad_dtype
     with pytest.raises(DeserializationError, match="Invalid structured dtype"):
         SerializationManager(SklearnSerializer()).deserialize(json.dumps(data))
+
+
+# ==== search estimators' scorer_, rebuilt from `scoring` ====
+
+SCORINGS = {
+    "default": None,
+    "string": "neg_mean_absolute_error",
+    "list": ["r2", "neg_mean_absolute_error"],
+    "dict": {"fit": "r2", "error": "neg_max_error"},
+}
+
+
+@pytest.mark.parametrize("format_name", ["json", "pickle"])
+@pytest.mark.parametrize("scoring", SCORINGS.values(), ids=SCORINGS.keys())
+@pytest.mark.parametrize("search_cls", [GridSearchCV, RandomizedSearchCV])
+def test_search_score(search_cls, scoring, format_name):
+    refit = (
+        scoring[0]
+        if isinstance(scoring, list)
+        else "error" if isinstance(scoring, dict) else True
+    )
+    model = search_cls(
+        Ridge(), {"alpha": [0.1, 1.0]}, cv=2, scoring=scoring, refit=refit
+    )
+    if search_cls is RandomizedSearchCV:
+        model.set_params(n_iter=2, random_state=0)
+    model.fit(X, yr)
+    loaded = _roundtrip(model, format_name)
+    assert loaded.score(X, yr) == model.score(X, yr)
+    assert type(loaded.scorer_) is type(model.scorer_)
+    if isinstance(model.scorer_, dict):
+        assert loaded.scorer_.keys() == model.scorer_.keys()
+
+
+def test_search_scorer_is_never_saved():
+    model = GridSearchCV(
+        Ridge(),
+        {"alpha": [0.1, 1.0]},
+        cv=2,
+        scoring=["r2", "neg_mean_absolute_error"],
+        refit="r2",
+    ).fit(X, yr)
+    assert "scorer_" not in SklearnSerializer().serialize(model)["attributes"]
+
+
+def test_search_with_scorer_object_as_scoring_still_refused():
+    """The `scoring` param itself can't hold a scorer object (make_scorer(...)): saving fails
+    cleanly, before scorer_ is involved."""
+    model = GridSearchCV(
+        Ridge(), {"alpha": [0.1, 1.0]}, cv=2, scoring=make_scorer(mean_absolute_error)
+    ).fit(X, yr)
+    with pytest.raises(SerializationError, match="Can't serialize callable"):
+        SerializationManager(SklearnSerializer()).serialize(model)

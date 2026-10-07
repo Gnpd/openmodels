@@ -127,6 +127,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A loaded `OneClassSVM` fitted on sparse data couldn't `predict`. Re-save older files
 - `transform` on a loaded `NMF` re-created private state it needed, changing the model as a side
   effect; that state is now saved
+- `score` on a loaded `GridSearchCV`/`RandomizedSearchCV` raised `AttributeError`, and a search
+  with several metrics (`scoring` as a list or dict) couldn't be saved at all. `scorer_` is now
+  rebuilt on load from `scoring`, as `fit` builds it, so files written by earlier versions work
+  too. A `scoring` given as a scorer object (`make_scorer(...)`) still can't be saved
 
 ## [0.2.2] - 2026-09-22
 
