@@ -132,6 +132,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilt on load from `scoring`, as `fit` builds it, so files written by earlier versions work
   too. A `scoring` given as a scorer object (`make_scorer(...)`) still can't be saved
 
+### Added
+
+- `docs/supported_models.md`: "Resuming Training" section. Continuing to train a loaded model
+  (`partial_fit`, `warm_start`) works for most estimators; the MiniBatch estimators, MLP
+  `partial_fit` and gradient boosting `warm_start` can't resume yet (planned for 0.3)
+
 ## [0.2.2] - 2026-09-22
 
 ### Changed

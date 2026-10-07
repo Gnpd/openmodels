@@ -74,6 +74,26 @@ All other scikit-learn estimators are supported, including:
 Every scikit-learn estimator discoverable via `SklearnSerializer.all_estimators()` is supported -
 see {doc}`format` for the details of what gets serialized.
 
+## Resuming Training
+
+A loaded model is meant for inference: `predict`, `transform`, `score` and the other methods
+that use the fitted model give the same results as the original.
+
+Continuing to train a loaded model - `partial_fit`, or `warm_start=True` and `fit` again -
+works for most estimators that support it, and gives the same model as continuing on the
+original. These estimators can't resume yet, because state they only use while training isn't
+saved:
+
+| Estimator | Can't resume with |
+|---|---|
+| `MiniBatchKMeans`, `MiniBatchNMF`, `MiniBatchDictionaryLearning` | `partial_fit` |
+| `MLPClassifier`, `MLPRegressor` | `partial_fit` (`warm_start` works) |
+| `GradientBoostingClassifier`, `GradientBoostingRegressor` | `warm_start` |
+| `HistGradientBoostingClassifier`, `HistGradientBoostingRegressor` | `warm_start` |
+
+For these, fit a new model on all the data instead. Support for resuming training on every
+estimator is planned for openmodels 0.3.
+
 ## Custom & Third-Party Estimators
 
 OpenModels supports custom estimators that follow scikit-learn's API via the
