@@ -304,6 +304,30 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
 GENERIC_PRIVATE_ATTRIBUTES: List[str] = ["_n_features_out"]
 
 
+def _restore_tuple_param(estimator_cls: type, name: str, value: Any) -> Any:
+    """
+    Turn a param that came back as a list into the tuple its estimator requires. Every format
+    stores tuples as lists (JSON has no tuple type, and the type map recording the tuple goes
+    through JSON too), but scikit-learn's param validation rejects a list for params declared
+    tuple-only - e.g. `MinMaxScaler.feature_range` or `CountVectorizer.ngram_range` - so the
+    loaded model couldn't be fitted again. A param is converted only when its class's
+    `_parameter_constraints` allow `tuple` but not `list` or "array-like"; classes without
+    constraints (most third-party estimators) are left unchanged, and so are params declared
+    "no_validation" (a string, not a list).
+    """
+    if not isinstance(value, list):
+        return value
+    constraints = getattr(estimator_cls, "_parameter_constraints", {}).get(name, [])
+    if (
+        isinstance(constraints, list)
+        and tuple in constraints
+        and list not in constraints
+        and "array-like" not in constraints
+    ):
+        return tuple(value)
+    return value
+
+
 class SklearnSerializer(
     ModelSerializer,
     NumpySerializerMixin,
@@ -1700,17 +1724,12 @@ class SklearnSerializer(
             # Only include params that are valid constructor arguments
             if param_name not in valid_args:
                 continue
-            # Handle PatchExtractor's 'patch_size' parameter
-            if (
-                estimator_class == "PatchExtractor"
-                and param_name == "patch_size"
-                and isinstance(param_value, list)
-            ):
-                param_value = tuple(param_value)
             param_type = param_types.get(param_name)
             param_dtype = param_dtypes.get(param_name) or None
-            reconstructed_params[param_name] = self.convert_from_serializable(
-                param_value, param_type, param_dtype
+            reconstructed_params[param_name] = _restore_tuple_param(
+                estimator_cls,
+                param_name,
+                self.convert_from_serializable(param_value, param_type, param_dtype),
             )
         model = estimator_cls(**reconstructed_params)
 

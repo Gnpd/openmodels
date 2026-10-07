@@ -131,6 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with several metrics (`scoring` as a list or dict) couldn't be saved at all. `scorer_` is now
   rebuilt on load from `scoring`, as `fit` builds it, so files written by earlier versions work
   too. A `scoring` given as a scorer object (`make_scorer(...)`) still can't be saved
+- Tuple-valued params came back as lists, which scikit-learn rejects for tuple-only params, so
+  some loaded models couldn't be fitted again (e.g. in cross-validation, or when retraining a
+  loaded pipeline): `MinMaxScaler`, `RobustScaler`, `CountVectorizer`, `TfidfVectorizer` and
+  `HashingVectorizer` with default settings, `PatchExtractor` with a `patch_size`, and
+  `SpectralBiclustering` with a tuple `n_clusters`. Params that scikit-learn declares
+  tuple-only are now restored as tuples, for files written by earlier versions too
 
 ### Added
 

@@ -49,10 +49,6 @@ KNOWN_FAILURES: Dict[Tuple[str, str], str] = {
     ("GradientBoostingRegressor", "warm_start"): _NOT_SAVED + "_rng",
     ("HistGradientBoostingClassifier", "warm_start"): _NOT_SAVED + "_random_seed, ...",
     ("HistGradientBoostingRegressor", "warm_start"): _NOT_SAVED + "_random_seed, ...",
-    ("HashingVectorizer", "partial_fit"): (
-        "the tuple param ngram_range loads as a list, which scikit-learn's param validation "
-        "rejects on any later fit"
-    ),
 }
 
 
