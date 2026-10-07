@@ -397,20 +397,50 @@ class SerializerMixin:
 
 class NumpySerializerMixin(SerializerMixin):
     # --- Helpers ---
-    def _get_dtype(self, value: Any) -> str:
+    def _get_dtype(self, value: Any) -> Any:
         """
-        Get the dtype of a numpy array, otherwise return empty string.
+        Get the dtype of a numpy array, otherwise return empty string. A list of arrays gets
+        one dtype per element (see `_get_element_dtypes`).
         """
         if isinstance(value, np.ndarray):
             return str(value.dtype)  # Get the actual numpy dtype
         elif isinstance(value, (list, tuple)) and value:
             # If it's a list/tuple that will become an ndarray, check its elements
             first_elem = value[0]
+            if isinstance(first_elem, np.ndarray):
+                return self._get_element_dtypes(value)
             if isinstance(first_elem, (int, np.integer)):
                 return "int32"  # Use int32 for integer lists
             elif isinstance(first_elem, (float, np.floating)):
                 return "float64"  # Use float64 for float lists
         return ""
+
+    def _get_element_dtypes(self, value: Any) -> Any:
+        """
+        One dtype per element of a list of arrays (e.g. MLP's `coefs_`), None for non-array
+        elements, so a float32 model isn't widened to float64 on load. Written only when an
+        array's values alone would rebuild it with another dtype (float32, int8, uint*, ...);
+        otherwise "", as before, because openmodels 0.2.2 can't read a dtype list. Arrays of
+        other kinds (object, strings) are rebuilt from their values, as before.
+        """
+
+        def inferred(array: np.ndarray) -> np.dtype:
+            # What np.array() makes of the array's values: float64 for floats, the default
+            # int for ints, bool for bools.
+            return (
+                np.array(array.ravel()[:1].tolist()).dtype
+                if array.size
+                else np.dtype(float)
+            )
+
+        if not any(
+            isinstance(v, np.ndarray)
+            and v.dtype.kind in "biuf"
+            and v.dtype != inferred(v)
+            for v in value
+        ):
+            return ""
+        return [str(v.dtype) if isinstance(v, np.ndarray) else None for v in value]
 
     # --- NumPy specific serializers/deserializers ---
     def _serialize_ndarray(self, value: np.ndarray):

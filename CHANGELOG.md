@@ -154,6 +154,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scalar type now loads as itself, for files written by earlier versions too. `np.bool_` values
   are now tagged `"bool_"` (NumPy 2 names the type `"bool"`, like Python's), so they load as
   `np.bool_`; earlier readers load them as Python `bool`, as before
+- Lists of arrays lost their dtypes: a `float32` `MLPRegressor`/`MLPClassifier` loaded with
+  `float64` `coefs_`/`intercepts_` and predicted `float64`. Such lists now record one dtype per
+  array, but only when the values alone would rebuild an array with another dtype, since
+  openmodels 0.2.2 can't read that list: it still reads every file it read correctly before.
+  Re-save older files
 
 ### Added
 

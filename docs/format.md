@@ -176,6 +176,24 @@ written: `serialize()` raises `SerializationError`. Files written before v4 save
 non-string keys as an `{"__openmodels_dict__": true, "keys", "key_types", "values"}` envelope
 tagged `"dict"`; it is still read.
 
+## Lists of arrays
+
+A list of arrays (e.g. an MLP's `coefs_`) is typed `["ndarray", ...]`. Its dtype entry is
+normally `""`, and each array is rebuilt from its values (floats as `float64`, ints as the
+default int). When that would give an array another dtype - a `float32` MLP, `uint8` or `int16`
+arrays - the dtype entry lists one dtype per element instead (`null` for an element that isn't
+an array):
+
+```json
+"attribute_types":  {"coefs_": ["ndarray", "ndarray"]},
+"attribute_dtypes": {"coefs_": ["float32", "float32"]}
+```
+
+openmodels 0.2.2 can't read a dtype list, so it's only written when needed: 0.2.2 still reads
+every list of arrays it read correctly before, and fails on the ones it would have widened.
+Arrays of strings or objects inside a list are rebuilt from their values, as before (a list of
+`object` arrays of strings loads as string arrays).
+
 A meta-estimator that holds other estimators - a `Pipeline` step, a `VotingClassifier`'s
 `estimators`, a `ColumnTransformer`'s `transformers` - doesn't get a special graph
 representation. Wherever a `BaseEstimator` value appears (inside `params` or `attributes`), it's
