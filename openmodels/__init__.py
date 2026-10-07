@@ -24,10 +24,10 @@ Example usage:
     manager = SerializationManager(SklearnSerializer())
 
     # Serialize the model to JSON
-    serialized_model = manager.serialize(model, format="json")
+    serialized_model = manager.serialize(model, format_name="json")
 
     # Deserialize the model from JSON
-    deserialized_model = manager.deserialize(serialized_model, format="json")
+    deserialized_model = manager.deserialize(serialized_model, format_name="json")
 
     # Use the deserialized model
     predictions = deserialized_model.predict(X_test)
