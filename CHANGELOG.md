@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Files without it (v1-v3) resolve by bare name as before, now warning when the name is
   ambiguous. Type tags are unchanged, so openmodels 0.2.2 still loads v4 files.
   `openmodels_format_version` is now `4`. See `docs/format.md`
+- `roundtrip_fit()` test helper (`openmodels/test_helpers.py`): after `fit`, every attribute the
+  fit created or replaced now takes the loaded copy's value, and is **deleted** if the loaded copy
+  lacks it. Before, only attributes openmodels saved were copied back, so state it failed to
+  save stayed on the instance and tests couldn't notice. Constructor parameters and attributes
+  the fit left untouched (e.g. the `set_output` configuration) are kept as before
 
 ### Fixed
 
@@ -117,6 +122,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The HistGradientBoosting and LDA state is rebuilt on load, so files written by earlier
   versions work too. For `get_feature_names_out` and `HDBSCAN`, re-save older files
+- A loaded `KNNImputer` couldn't impute: `transform` failed on any data with missing values.
+  Re-save older files
+- A loaded `OneClassSVM` fitted on sparse data couldn't `predict`. Re-save older files
+- `transform` on a loaded `NMF` re-created private state it needed, changing the model as a side
+  effect; that state is now saved
 
 ## [0.2.2] - 2026-09-22
 
