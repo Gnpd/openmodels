@@ -221,6 +221,25 @@ KNOWN_ROUNDTRIP_XFAILS.update(
     )
 )
 
+# Resuming training after loading isn't supported: partial_fit after fit needs running training
+# state (e.g. MiniBatchKMeans._counts) that openmodels doesn't save, since a loaded model is meant
+# for inference. check_fit_score_takes_y calls partial_fit on the already-fitted, round-tripped
+# instance. If resuming training becomes supported, these flip to XPASS (strict).
+_RESUME_TRAINING_REASON = (
+    "partial_fit after loading needs running training state (e.g. MiniBatchKMeans._counts) "
+    "that isn't saved; resuming training on a loaded model isn't supported."
+)
+KNOWN_ROUNDTRIP_XFAILS.update(
+    _entries(
+        _RESUME_TRAINING_REASON,
+        {
+            "MiniBatchDictionaryLearning": ["check_fit_score_takes_y"],
+            "MiniBatchKMeans": ["check_fit_score_takes_y"],
+            "MiniBatchNMF": ["check_fit_score_takes_y"],
+        },
+    )
+)
+
 
 def _check_name(check) -> str:
     return getattr(check, "func", check).__name__

@@ -1,15 +1,21 @@
 """
-Tests for openmodels.test_helpers.run_test_model itself: it must round-trip the dense fit and
-the sparse fit separately, never the caller's own instance.
+Tests for openmodels.test_helpers itself: run_test_model must round-trip the dense fit and the
+sparse fit separately, never the caller's own instance; roundtrip_fit must leave an instance
+with exactly the state a loaded model has.
 """
 
+import inspect
 import os
 
 import numpy as np
+import pandas as pd
 import pytest
 from scipy.sparse import csr_matrix
+from sklearn.cluster import KMeans
 from sklearn.exceptions import NotFittedError
 from sklearn.neighbors import KNeighborsRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
 from openmodels import test_helpers
@@ -73,3 +79,42 @@ def test_temp_file_removed_and_failure_labelled(monkeypatch):
             KNeighborsRegressor(), X, Y, None, None, "helper_fail"
         )
     assert not os.path.exists("./test/temp/helper_fail.json")
+
+
+# ==== roundtrip_fit ====
+
+
+def test_roundtrip_fit_drops_fitted_state_that_isnt_saved():
+    """An attribute fit creates but openmodels doesn't save (KMeans' training-only _tol) is
+    missing afterwards, as on a loaded model. Saved state is the loaded copy's."""
+    plain = KMeans(n_clusters=2, n_init=1, random_state=0).fit(X)
+    assert hasattr(plain, "_tol")
+
+    model = KMeans(n_clusters=2, n_init=1, random_state=0)
+    with test_helpers.roundtrip_fit(KMeans):
+        model.fit(X)
+    assert not hasattr(model, "_tol")
+    np.testing.assert_array_equal(model.cluster_centers_, plain.cluster_centers_)
+    np.testing.assert_array_equal(model.predict(X), plain.predict(X))
+
+
+def test_roundtrip_fit_keeps_params_and_untouched_configuration():
+    hidden = (3,)
+    model = MLPRegressor(hidden_layer_sizes=hidden, max_iter=5, random_state=0)
+    with test_helpers.roundtrip_fit(MLPRegressor):
+        model.fit(X, Y)
+    assert model.hidden_layer_sizes is hidden  # JSON would have made it a list
+
+    scaler = StandardScaler().set_output(transform="pandas")
+    with test_helpers.roundtrip_fit(StandardScaler):
+        scaler.fit(X)
+    assert isinstance(scaler.transform(X), pd.DataFrame)
+
+
+def test_roundtrip_fit_restores_methods_and_keeps_signature():
+    original_fit = KMeans.__dict__["fit"]
+    with test_helpers.roundtrip_fit(KMeans):
+        # scikit-learn's check_fit_score_takes_y inspects fit's signature
+        params = list(inspect.signature(KMeans(n_init=1).fit).parameters)
+        assert params[:2] == ["X", "y"]
+    assert KMeans.__dict__["fit"] is original_fit

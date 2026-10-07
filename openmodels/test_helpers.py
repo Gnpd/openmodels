@@ -65,21 +65,29 @@ def roundtrip_fit(
 ) -> Iterator[None]:
     """
     Monkeypatch fit()/fit_transform()/fit_predict() on the given estimator classes so that,
-    immediately after fitting, the estimator's *fitted* attributes are replaced with the result
-    of an openmodels serialize -> deserialize round-trip. Restores the original methods on exit.
+    immediately after fitting, the estimator's fitted state is replaced with that of an
+    openmodels serialize -> deserialize round-trip. Restores the original methods on exit.
 
     Only methods defined directly on the class are patched (not inherited ones), since e.g.
     TransformerMixin.fit_transform already calls self.fit(...) and would be covered by patching
     fit alone; only classes that override fit_transform/fit_predict directly need those patched.
 
-    Only attributes openmodels actually serializes as fitted state (per
-    SklearnSerializer._extract_estimator_attributes - sklearn's trailing-underscore convention,
-    plus the small set of private attributes some estimators need at predict time) are copied
-    back onto the original instance. Constructor-set parameters are deliberately left untouched:
-    JSON has no tuple type, so e.g. a tuple-valued param would come back as a list after a
-    round-trip even though openmodels never claims to preserve exact param typing - copying it
-    over would make the *test infrastructure* look like a fidelity bug in checks like
-    check_dont_overwrite_parameters.
+    The fitted state is every instance attribute the fit call created or replaced: each is set
+    to the loaded copy's value, or **deleted** if the loaded copy doesn't have it. So an
+    attribute openmodels doesn't save is missing afterwards, exactly as on a really loaded
+    model, and any later method that needs it fails. Two kinds of attribute are kept as they
+    are:
+
+    - constructor parameters: JSON has no tuple type, so e.g. a tuple-valued param would come
+      back as a list, and copying it over would make the *test infrastructure* look like a
+      fidelity bug in checks like check_dont_overwrite_parameters;
+    - attributes the fit call left untouched (the same object before and after), such as the
+      `set_output` configuration, metadata requests, or a parent estimator's callback context.
+      An attribute fit mutates in place without rebinding counts as untouched, so this can't
+      see it.
+
+    Nested estimators held in parameters (e.g. a Pipeline's steps) are fitted in place and are
+    only round-tripped if their own class is passed too.
 
     This lets sklearn's own estimator-specific test suites be reused unmodified against
     round-tripped models: any assertion they make about a fitted estimator becomes, implicitly,
@@ -89,13 +97,20 @@ def roundtrip_fit(
     manager = SerializationManager(serializer)
     originals: dict = {}
 
-    def _roundtrip(instance) -> None:
-        fitted_keys = serializer._extract_estimator_attributes(instance).keys()
+    def _roundtrip(instance, before_fit: dict) -> None:
         serialized = manager.serialize(instance, format_name=format_name)
-        deserialized = manager.deserialize(serialized, format_name=format_name)
-        for key in fitted_keys:
-            if hasattr(deserialized, key):
-                setattr(instance, key, getattr(deserialized, key))
+        loaded = vars(manager.deserialize(serialized, format_name=format_name))
+        params = instance.get_params(deep=False)
+        for key, value in list(vars(instance).items()):
+            if key in params or (key in before_fit and before_fit[key] is value):
+                continue
+            if key in loaded:
+                setattr(instance, key, loaded[key])
+            else:
+                delattr(instance, key)
+        for key, value in loaded.items():
+            if key not in params and key not in vars(instance):
+                setattr(instance, key, value)
 
     class _RoundtripDescriptor:
         """
@@ -121,8 +136,9 @@ def roundtrip_fit(
 
             @functools.wraps(bound_orig)
             def wrapper(*args, **kwargs):
+                before_fit = dict(vars(obj))
                 result = bound_orig(*args, **kwargs)
-                _roundtrip(obj)
+                _roundtrip(obj, before_fit)
                 return result
 
             return wrapper

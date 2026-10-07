@@ -182,6 +182,9 @@ def _data_for(name: str, estimator: Any) -> SimpleNamespace:
         return data
     elif name == "PatchExtractor":
         data.X = rng.rand(3, 20, 20)  # the default patch size is a tenth of the image
+    elif name in ("KNNImputer", "SimpleImputer", "MissingIndicator"):
+        data.X = X.copy()
+        data.X[::5, 1] = np.nan  # without NaNs, transform never reads the fitted data
     elif name == "ColumnTransformer":
         data.X = np.c_[X[:, :2], (X[:, 2] * 3).astype(int)]
     data.fit_args = (data.X, data.y)
