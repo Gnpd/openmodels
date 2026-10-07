@@ -807,7 +807,7 @@ class SklearnSerializer(
         self, data: Dict[str, Any]
     ) -> _CalibratedClassifier:
         estimator = self._deserialize_core(data["estimator"])
-        calibrators = [self.deserialize(c) for c in data["calibrators"]]
+        calibrators = [self._deserialize_core(c) for c in data["calibrators"]]
         classes = np.array(data["classes"])
         method = data["method"]
         return _CalibratedClassifier(
