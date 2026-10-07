@@ -69,7 +69,7 @@ CASES = {
         ),
         None,
     ),
-    # BallTree cases (BUG_AUDIT.md #7): the tree isn't written, only rebuilt on load.
+    # BallTree cases: the tree isn't written, only rebuilt on load.
     "knn_classifier_ball_tree": (
         lambda: KNeighborsClassifier(algorithm="ball_tree"),
         y,

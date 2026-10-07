@@ -137,7 +137,7 @@ def test_load_file_io_error(monkeypatch, tmp_path):
         manager.load(file_path, format_name="json")
 
 
-# ==== every manager failure is an OpenModels error (BUG_AUDIT #17) ====
+# ==== every manager failure is an OpenModels error ====
 
 
 class _Unencodable:

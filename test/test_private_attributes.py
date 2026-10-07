@@ -1,7 +1,7 @@
 """
 Private attributes that fitted estimators need after loading for methods other than
-predict/transform (BUG_AUDIT #25, #26, #27, #29): each was missing, so the method raised on the
-loaded copy while predict kept working, which is all the smoke tests compare.
+predict/transform. Each used to be missing, so the method raised on the loaded copy while
+predict kept working, which is all the smoke tests compare.
 """
 
 import json
@@ -40,7 +40,7 @@ def _roundtrip(model, format_name="json"):
     return manager.deserialize(manager.serialize(model, format_name), format_name)
 
 
-# ==== #26 HistGradientBoostingClassifier._loss, #29 HistGradientBoosting*._n_features ====
+# ==== HistGradientBoostingClassifier._loss, HistGradientBoosting*._n_features ====
 
 
 @pytest.mark.parametrize("format_name", FORMATS)
@@ -74,7 +74,7 @@ def test_soft_voting_with_hgb_classifier_predicts():
     np.testing.assert_array_equal(_roundtrip(model).predict(X), model.predict(X))
 
 
-# ==== #27 LinearDiscriminantAnalysis._max_components ====
+# ==== LinearDiscriminantAnalysis._max_components ====
 
 
 @pytest.mark.parametrize("n_components", [None, 1])
@@ -86,7 +86,7 @@ def test_lda_transform(n_components):
     assert list(loaded.get_feature_names_out()) == list(model.get_feature_names_out())
 
 
-# ==== #25 _n_features_out (generic) and Stacking's _n_feature_outs ====
+# ==== _n_features_out (generic) and Stacking's _n_feature_outs ====
 
 N_FEATURES_OUT_ESTIMATORS = [
     "BernoulliRBM",
@@ -151,7 +151,7 @@ def test_n_features_out_saved_only_as_instance_attribute():
     assert _roundtrip(pca)._n_features_out == 2
 
 
-# ==== #29 HDBSCAN._single_linkage_tree_ (a structured array) ====
+# ==== HDBSCAN._single_linkage_tree_ (a structured array) ====
 
 
 @pytest.mark.parametrize("format_name", FORMATS)

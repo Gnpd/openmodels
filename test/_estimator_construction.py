@@ -11,9 +11,8 @@ This is used two ways:
   CONSTRUCTOR_ARGS[name] entries (via BASE_CLASSIFIER/BASE_REGRESSOR or the dict directly) for
   the subset of estimators where their own special-casing needs nothing more than "a valid
   estimator to wrap" - avoiding maintaining the same "this class needs an estimator= kwarg"
-  fact independently in multiple files (see the sklearn-1.9-compat branch's audit notes: this
-  already caused HalvingGridSearchCV support to be added in only one of two files that needed
-  it). Where a file's fitting data legitimately calls for a richer choice than the minimal
+  fact independently in multiple files (that once caused HalvingGridSearchCV support to be
+  added in only one of the two files that needed it). Where a file's fitting data legitimately calls for a richer choice than the minimal
   default here (e.g. StackingRegressor/VotingRegressor mixing in a RandomForestRegressor for
   more realistic coverage, or ColumnTransformer/FeatureUnion needing column selectors matched
   to real data), that file keeps its own local, richer construction instead of using this

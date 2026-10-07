@@ -154,7 +154,7 @@ def test_is_valid_estimator_typeerror_branch(monkeypatch):
     result = _custom_estimator.is_valid_estimator("BadEstimator", dummy_instance)
     assert result is False
 
-# ==== (name, class) pairs (BUG_AUDIT #19) ====
+# ==== (name, class) pairs ====
 
 
 class PairEstimatorA(BaseEstimator):

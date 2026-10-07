@@ -22,7 +22,7 @@ def test_calibrated_classifier_roundtrips(method, format_name):
 
 def test_calibrators_load_through_deserialize_core(monkeypatch):
     """The public, root-only deserialize() (version checks, per-load state reset) runs once
-    per load, not once more for every calibrator (BUG_AUDIT #22)."""
+    per load, not once more for every calibrator."""
     model = CalibratedClassifierCV(LogisticRegression(), cv=2).fit(X, y)
     serializer = SklearnSerializer()
     data = serializer.serialize(model)

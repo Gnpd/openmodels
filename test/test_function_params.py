@@ -34,7 +34,7 @@ def _transformer_roundtrip(func, data=X):
     np.testing.assert_array_equal(loaded.transform(data), model.transform(data))
 
 
-# ==== #5: ufuncs ====
+# ==== ufuncs ====
 
 
 @pytest.mark.parametrize("func", [np.log1p, np.exp, np.sqrt, np.abs, np.expm1])
@@ -93,7 +93,7 @@ def test_builtin_allowed_when_trusted():
     assert loaded.func is abs
 
 
-# ==== #11: NumPy array functions ====
+# ==== NumPy array functions ====
 
 
 @pytest.mark.parametrize(
