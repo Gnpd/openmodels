@@ -105,6 +105,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged
 - `custom_estimators=[("Name", cls), ...]` (a list of pairs, as documented) registered nothing;
   it now works, alongside the existing forms
+- Methods other than `predict`/`transform` failed on loaded models because private state wasn't
+  saved:
+  - `HistGradientBoostingClassifier.predict_proba` (so a soft `VotingClassifier` containing one
+    couldn't `predict`), and `staged_predict*` for both HistGradientBoosting estimators;
+  - `LinearDiscriminantAnalysis.transform`;
+  - `get_feature_names_out` for 24 estimators, including `KMeans`, `Birch`, `Nystroem`,
+    `RBFSampler`, the random projections, `PLS*`/`CCA`, `Isomap` and `Stacking*`, so a
+    `Pipeline` using one of them couldn't `predict` with `set_output(transform="pandas")`;
+  - `HDBSCAN.dbscan_clustering`.
+
+  The HistGradientBoosting and LDA state is rebuilt on load, so files written by earlier
+  versions work too. For `get_feature_names_out` and `HDBSCAN`, re-save older files
 
 ## [0.2.2] - 2026-09-22
 

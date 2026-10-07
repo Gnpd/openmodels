@@ -58,6 +58,11 @@ from sklearn.base import BaseEstimator, check_is_fitted
 from sklearn.exceptions import NotFittedError
 from sklearn.utils.discovery import all_estimators
 from sklearn.neighbors import BallTree, KDTree, KernelDensity
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.ensemble import (
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
+)
 
 # Private, but its tree-building code (NeighborsBase._fit) is identical across TESTED_VERSIONS;
 # see _rebuild_neighbors_tree.
@@ -194,9 +199,11 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "PLSCanonical": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "IsotonicRegression": ["f_"],
     "TransformedTargetRegressor": ["_training_dim"],
+    "StackingRegressor": ["_n_feature_outs"],
     # Clusters:
     "BisectingKMeans": ["_bisecting_tree", "_n_threads", "_X_mean"],
     "Birch": ["_subcluster_norms"],
+    "HDBSCAN": ["_single_linkage_tree_"],
     "KMeans": ["_n_threads"],
     "MiniBatchKMeans": ["_n_threads"],
     # Classifiers:
@@ -224,7 +231,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "RadiusNeighborsClassifier": ["_fit_method", "_fit_X", "_y", "_tree"],
     "RidgeClassifier": ["_label_binarizer"],
     "RidgeClassifierCV": ["_label_binarizer"],
-    "StackingClassifier": ["_label_encoder"],
+    "StackingClassifier": ["_label_encoder", "_n_feature_outs"],
     "SVC": [
         "_sparse",
         "_n_support",
@@ -283,6 +290,12 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     ],
     "TfidfVectorizer": ["_tfidf"],
 }
+
+# Private attributes saved for every estimator that has them as plain instance attributes (a
+# property, as PCA's `_n_features_out` is, is computed and can't be set on load).
+# `_n_features_out` is how ClassNamePrefixFeaturesOutMixin estimators (KMeans, Nystroem, random
+# projections, ...) tell in get_feature_names_out that they're fitted.
+GENERIC_PRIVATE_ATTRIBUTES: List[str] = ["_n_features_out"]
 
 
 class SklearnSerializer(
@@ -671,6 +684,9 @@ class SklearnSerializer(
         # Collect attributes
         attribute_keys = [key for key in dir(estimator) if is_valid_attribute(key)]
         attribute_keys += ATTRIBUTE_EXCEPTIONS.get(estimator.__class__.__name__, [])
+        attribute_keys += [
+            key for key in GENERIC_PRIVATE_ATTRIBUTES if key in vars(estimator)
+        ]
 
         # Prevents attribute exceptions introduced in newer scikit-learn versions from breaking older versions of the serializer
         attributes = {
@@ -1200,6 +1216,34 @@ class SklearnSerializer(
             **model.effective_metric_params_,
         )
 
+    def _rebuild_derived_attributes(self, model: BaseEstimator) -> None:
+        """
+        Recompute private attributes that `fit` derives from fitted state openmodels does save,
+        exactly as `fit` computes them, so files without them (every file written by 0.2.x)
+        load complete:
+
+        - `HistGradientBoosting*._loss`, needed by `predict_proba` (the regressor's is also
+          saved). `sample_weight` only changes the loss during training, never its link.
+        - `HistGradientBoosting*._n_features`, needed by `staged_predict*`: the input width.
+        - `LinearDiscriminantAnalysis._max_components`, needed by `transform`.
+        """
+        if isinstance(
+            model, (HistGradientBoostingClassifier, HistGradientBoostingRegressor)
+        ) and hasattr(model, "n_trees_per_iteration_"):
+            if not hasattr(model, "_loss"):
+                model._loss = model._get_loss(sample_weight=None)
+            if not hasattr(model, "_n_features"):
+                model._n_features = model.n_features_in_
+        if (
+            isinstance(model, LinearDiscriminantAnalysis)
+            and hasattr(model, "classes_")
+            and not hasattr(model, "_max_components")
+        ):
+            max_components = min(len(model.classes_) - 1, model.n_features_in_)
+            model._max_components = (
+                max_components if model.n_components is None else model.n_components
+            )
+
     def _serialize_estimators_collection(
         self, value: Union[np.ndarray, List[BaseEstimator]]
     ) -> List[Any]:
@@ -1683,5 +1727,6 @@ class SklearnSerializer(
             self._resolve_birch_leaf_links()
         self._rebuild_neighbors_tree(model)
         self._rebuild_kernel_density_tree(model)
+        self._rebuild_derived_attributes(model)
 
         return model

@@ -7,6 +7,7 @@ Each mixin implements handlers for specific types, allowing easy extension and m
 support for new serialization targets.
 """
 
+import ast
 import importlib
 import inspect
 import sys
@@ -302,6 +303,24 @@ class NumpySerializerMixin(SerializerMixin):
     def _serialize_ndarray(self, value: np.ndarray):
         return self.convert_to_serializable(value.tolist())
 
+    def _deserialize_ndarray(self, value, value_dtype=None):
+        """
+        Rebuild an array from its nested lists and the `str(dtype)` written next to it. A
+        structured dtype (e.g. HDBSCAN's `_single_linkage_tree_`) is written as a list of
+        `(name, type)` tuples, which is a plain literal: it's parsed with `ast.literal_eval`
+        (never `eval`), and each row goes back to a tuple, as NumPy requires for records.
+        Only 1-D structured arrays are supported, which is what scikit-learn stores.
+        """
+        if value_dtype and value_dtype.startswith("["):
+            try:
+                dtype = np.dtype(ast.literal_eval(value_dtype))
+            except (ValueError, TypeError, SyntaxError) as e:
+                raise DeserializationError(
+                    f"Invalid structured dtype {value_dtype!r}: {e}"
+                ) from e
+            return np.array([tuple(row) for row in value], dtype=dtype)
+        return np.array(value, dtype=(value_dtype or None))
+
     def _serialize_generic(self, value: np.generic):
         return value.item()
 
@@ -359,7 +378,7 @@ class NumpySerializerMixin(SerializerMixin):
 
     def _get_deserializer_handlers(self):
         return [
-            ("ndarray", lambda v, dt=None: np.array(v, dtype=(dt or None))),
+            ("ndarray", self._deserialize_ndarray),
             ("generic", lambda v: np.array(v).item()),
             ("float64", np.float64),
             ("int32", int),
