@@ -56,6 +56,7 @@ from sklearn.multiclass import _ConstantPredictor
 from sklearn.tree._tree import Tree
 from sklearn.base import BaseEstimator, check_is_fitted
 from sklearn.exceptions import NotFittedError
+from sklearn.utils import Bunch
 from sklearn.utils.discovery import all_estimators
 from sklearn.neighbors import BallTree, KDTree, KernelDensity
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -77,6 +78,7 @@ from openmodels.protocols import ModelSerializer
 from openmodels.serializers.base import (
     NumpySerializerMixin,
     ScipySerializerMixin,
+    _key_to_text,
 )
 import warnings
 
@@ -131,8 +133,28 @@ TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0", "1.9.1"]
 # v4: every estimator node (root and nested) records "estimator_package" (the class's top-level
 # package) next to "estimator_class", and classes are resolved by (package, class name), so
 # same-named classes from different packages coexist. Files without it (v1-v3) resolve by bare
-# name, custom estimators winning. Type tags are unchanged, so v3 readers still load v4 files.
+# name, custom estimators winning. Also in v4: a dict whose values need restoring (arrays,
+# tuples, estimators, ...) is typed per key, as {"dict": {key: type}} ({"Bunch": ...} for a
+# scikit-learn Bunch), with a matching {key: dtype} dtypes entry; a tuple inside it is typed
+# {"tuple": [types]}, and a masked array (cv_results_'s param_* columns) "MaskedArray". Non-string
+# keys (e.g. class_weight={0: 1.0}) are written as text, with their types in a "key_types"
+# entry next to "dict"; v1-v3 files wrote such dicts as an `__openmodels_dict__` envelope,
+# which is still read. Dicts of plain JSON values with string keys keep the "dict" tag. v3
+# readers still load v4 files but don't know these types: values load as their saved JSON,
+# and non-string keys as strings.
 OPENMODELS_FORMAT_VERSION = 4
+
+# Type tags whose saved values every format gives back unchanged: a dict whose values all have
+# one of these (or are lists of them) needs no per-key types and keeps the "dict" tag.
+_PLAIN_TYPES = frozenset({"str", "int", "float", "bool", "NoneType"})
+
+
+def _is_plain_type(tag: Any) -> bool:
+    if isinstance(tag, str):
+        return tag in _PLAIN_TYPES
+    if isinstance(tag, list):
+        return all(_is_plain_type(t) for t in tag)
+    return False
 
 
 def _package_of(cls: type) -> str:
@@ -608,14 +630,18 @@ class SklearnSerializer(
             if name not in NOT_SUPPORTED_ESTIMATORS
         ]
 
-    def _get_nested_types(self, item: Any) -> Any:
+    def _get_nested_types(self, item: Any, in_dict: bool = False) -> Any:
         """
-        Recursively determine the type of elements within nested lists.
+        Recursively determine the type of elements within nested lists and dicts.
 
         Parameters
         ----------
         item : Any
             The item to inspect for nested types.
+        in_dict : bool
+            Whether `item` sits inside a typed dict, where a tuple is typed {"tuple": [...]}
+            so it comes back as a tuple. Elsewhere a tuple is typed as a tuple of its
+            elements' types, which formats save as a list, as before v4.
 
         Returns
         -------
@@ -626,8 +652,17 @@ class SklearnSerializer(
         ---------
 
         [1, [1, 2, [1, 2, 3]], 2] -> ['int',['int','int','ndarray'],'int']
+        {"a": np.zeros(2), "b": (1, 2)} -> {"dict": {"a": "ndarray", "b": {"tuple": ["int", "int"]}}}
+        {"a": 1, "b": [1.0, 2.0]} -> "dict"
 
         """
+        # Before the ndarray checks: a masked array is an ndarray subclass.
+        if isinstance(item, np.ma.MaskedArray):
+            return "MaskedArray"
+
+        if isinstance(item, dict):
+            return self._get_dict_types(item)
+
         # Handle np.ndarray of estimators
         if (
             isinstance(item, np.ndarray)
@@ -647,11 +682,13 @@ class SklearnSerializer(
 
         # Handle tuples explicitly
         if isinstance(item, tuple):
+            if in_dict:
+                return {"tuple": [self._get_nested_types(s, True) for s in item]}
             return tuple(self._get_nested_types(subitem) for subitem in item)
 
         # Handle lists
         if isinstance(item, list):
-            return [self._get_nested_types(subitem) for subitem in item]
+            return [self._get_nested_types(subitem, in_dict) for subitem in item]
 
         elif isinstance(item, BaseEstimator):
             # For estimators, return their class name instead of just 'BaseEstimator'
@@ -672,6 +709,50 @@ class SklearnSerializer(
             # Return the type name if it's not a list or it's an empty list
             return type(item).__name__
 
+    def _get_dict_types(self, item: dict) -> Any:
+        """
+        Type of a dict: {"dict": {key: type}} when a value needs restoring on load, plus
+        {"key_types": {key: type}} for its non-string keys, which are saved as text (see
+        `_key_to_text`); "dict" when every key is a string and every value plain JSON. A Bunch
+        is always typed {"Bunch": {...}}, so it comes back as a Bunch.
+        """
+        value_types = {
+            _key_to_text(key): self._get_nested_types(value, in_dict=True)
+            for key, value in item.items()
+        }
+        key_types = {
+            _key_to_text(key): self._get_nested_types(key)
+            for key in item
+            if not isinstance(key, str)
+        }
+        if isinstance(item, Bunch):
+            return {"Bunch": value_types}
+        if key_types:
+            return {"dict": value_types, "key_types": key_types}
+        if all(_is_plain_type(t) for t in value_types.values()):
+            return "dict"
+        return {"dict": value_types}
+
+    def _get_nested_dtypes(self, item: Any) -> Any:
+        """dtypes for the values of a typed dict, mirroring it: an array's dtype, a dict of
+        them for a nested dict, a list of them for a list. None when nothing inside needs one
+        (a masked array records its own)."""
+        if isinstance(item, np.ma.MaskedArray):
+            return None
+        if isinstance(item, np.ndarray):
+            return str(item.dtype)
+        if isinstance(item, dict):
+            dtypes = {
+                _key_to_text(key): dtype
+                for key, value in item.items()
+                if (dtype := self._get_nested_dtypes(value)) is not None
+            }
+            return dtypes or None
+        if isinstance(item, (list, tuple)):
+            dtypes_list = [self._get_nested_dtypes(value) for value in item]
+            return dtypes_list if any(d is not None for d in dtypes_list) else None
+        return None
+
     def _get_type_maps(self, values_dict: dict) -> tuple[dict, dict]:
         """
         Given a dict of raw values (e.g. model attributes or params),
@@ -691,6 +772,13 @@ class SklearnSerializer(
         for key, value in values_dict.items():
             if isinstance(value, tuple):
                 dtypes_map.pop(key, None)  # Remove tuples from dtypes_map
+
+        # A typed dict's dtypes mirror its values (see _get_nested_dtypes).
+        for key, value in values_dict.items():
+            if isinstance(types_map[key], dict):
+                dict_dtypes = self._get_nested_dtypes(value)
+                if dict_dtypes is not None:
+                    dtypes_map[key] = dict_dtypes
 
         return types_map, dtypes_map
 
@@ -765,6 +853,17 @@ class SklearnSerializer(
             and value_type != "dict"
         ):
             return self._deserialize_kernel(value)
+        # A Bunch (e.g. Voting*/Stacking*'s named_estimators_) is typed like a dict, under
+        # its own name (see _get_dict_types).
+        if (
+            isinstance(value_type, dict)
+            and len(value_type) == 1
+            and isinstance(value_type.get("Bunch"), dict)
+            and isinstance(value, dict)
+        ):
+            return Bunch(
+                **self._deserialize_typed_dict(value, value_type["Bunch"], value_dtype)
+            )
         return super().convert_from_serializable(value, value_type, value_dtype)
 
     # --- Handlers ---
@@ -777,6 +876,8 @@ class SklearnSerializer(
             (Kernel, self._serialize_kernel),
             (Tree, self._serialize_tree),
             (TreePredictor, self._serialize_tree_predictor),
+            # Before np.ndarray: a masked array is an ndarray subclass.
+            (np.ma.MaskedArray, self._serialize_masked_array),
             (np.ndarray, self._serialize_estimators_collection),
             (_CalibratedClassifier, self._serialize_calibrated_classifier),
             (_BisectingTree, self._serialize_bisecting_tree),
@@ -805,6 +906,7 @@ class SklearnSerializer(
                 ("_CurveScorer", self._deserialize_curve_scorer),
                 ("_CFNode", self._deserialize_cfnode),
                 ("make_column_selector", self._deserialize_column_selector),
+                ("MaskedArray", self._deserialize_masked_array),
             ]
             + loss_handlers
             + estimator_handlers
@@ -843,6 +945,47 @@ class SklearnSerializer(
         node.left = self._deserialize_bisecting_tree(data["left"])
         node.right = self._deserialize_bisecting_tree(data["right"])
         return node
+
+    def _serialize_masked_array(self, value: np.ma.MaskedArray) -> Dict[str, Any]:
+        """
+        A masked array (a search's cv_results_["param_*"] columns): data, mask, shape and
+        dtype. Masked slots are written as the array's fill value, or None for object arrays,
+        whose elements (strings, None, dicts, estimators, ...) are typed one by one.
+        """
+        mask = np.ma.getmaskarray(value).ravel()
+        serialized: Dict[str, Any] = {
+            "mask": mask.tolist(),
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+        }
+        if value.dtype == np.dtype("O"):
+            items = [
+                None if masked else item
+                for item, masked in zip(value.data.ravel().tolist(), mask)
+            ]
+            serialized["data"] = self.convert_to_serializable(items)
+            serialized["types"] = [
+                self._get_nested_types(item, in_dict=True) for item in items
+            ]
+        else:
+            serialized["data"] = self.convert_to_serializable(value.filled().ravel())
+        return serialized
+
+    def _deserialize_masked_array(self, data: Dict[str, Any]) -> np.ma.MaskedArray:
+        shape = tuple(data["shape"])
+        mask = np.array(data["mask"], dtype=bool).reshape(shape)
+        if "types" in data:
+            items = [
+                self.convert_from_serializable(item, item_type)
+                for item, item_type in zip(data["data"], data["types"])
+            ]
+            # Filled one by one: np.array would turn list or tuple elements into dimensions.
+            values = np.empty(len(items), dtype=object)
+            for i, item in enumerate(items):
+                values[i] = item
+        else:
+            values = np.array(data["data"], dtype=np.dtype(data["dtype"]))
+        return np.ma.MaskedArray(values.reshape(shape), mask=mask)
 
     def _serialize_calibrated_classifier(
         self, obj: _CalibratedClassifier

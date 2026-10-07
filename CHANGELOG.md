@@ -28,7 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Wire format v4:** every estimator node records `estimator_package` (the class's top-level
   package) next to `estimator_class`, and classes are resolved by `(package, class name)`.
   Files without it (v1-v3) resolve by bare name as before, now warning when the name is
-  ambiguous. Type tags are unchanged, so openmodels 0.2.2 still loads v4 files.
+  ambiguous. Dicts whose values need restoring are typed per key, and non-string keys (e.g.
+  `class_weight={0: 1.0}`) are saved as text with their types next to the value types, instead
+  of a keys/values envelope (see the fix below). openmodels 0.2.2 still loads v4 files but
+  doesn't know these types: dict values load as plain JSON, as they always did, and non-string
+  keys as strings, so such a `class_weight` model predicts but can't be refitted there.
   `openmodels_format_version` is now `4`. See `docs/format.md`
 - `roundtrip_fit()` test helper (`openmodels/test_helpers.py`): after `fit`, every attribute the
   fit created or replaced now takes the loaded copy's value, and is **deleted** if the loaded copy
@@ -137,6 +141,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HashingVectorizer` with default settings, `PatchExtractor` with a `patch_size`, and
   `SpectralBiclustering` with a tuple `n_clusters`. Params that scikit-learn declares
   tuple-only are now restored as tuples, for files written by earlier versions too
+- Values inside string-keyed dicts loaded as plain JSON: arrays and tuples came back as lists,
+  NumPy scalars as Python ones, and estimators as raw dicts. This affected e.g.
+  `FunctionTransformer(kw_args=...)`, a search's `cv_results_` (whose arrays came back as lists
+  and its masked `param_*` columns as lists with `None`), and `Voting*`/`Stacking*`'s
+  `named_estimators_`, which was a dict of raw dicts instead of a `Bunch` of estimators. These
+  values are now typed per key and restored exactly, including in dicts with non-string keys;
+  re-save older files. Tuple dict keys, which saved but failed on load, now raise
+  `SerializationError` at save; so does a dict holding keys with the same text (`1` and `"1"`)
 
 ### Added
 

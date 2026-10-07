@@ -62,6 +62,26 @@ _BUILTIN_TYPES: Dict[str, type] = {
 }
 
 
+def _key_to_text(key: Any) -> str:
+    """
+    A dict key as the text JSON requires for object keys: strings unchanged; ints, floats,
+    bools, None and NumPy scalars as `str()`. Their type is recorded in the dict's type entry
+    ("key_types") and restored by `SerializerMixin._text_to_key`. Dicts in values written
+    without a type entry (kernels, Birch nodes, tree predictors, ...) only ever have string
+    keys. Other keys (tuples, ...) can't be written.
+    """
+    if isinstance(key, str):
+        return key
+    if isinstance(key, (np.integer, np.floating, np.bool_)):
+        key = key.item()
+    if key is None or isinstance(key, (int, float)):  # bool is an int
+        return str(key)
+    raise SerializationError(
+        f"Can't serialize dict key {key!r} of type {type(key).__name__}: only str, int, "
+        f"float, bool and None keys are supported"
+    )
+
+
 class SerializerMixin:
     """
     Base mixin providing recursive serialization and native Python object
@@ -78,17 +98,18 @@ class SerializerMixin:
 
         # Recursive case: dict, list, tuple
         if isinstance(value, dict):
-            if all(isinstance(k, str) for k in value):
-                return {k: self.convert_to_serializable(v) for k, v in value.items()}
-            # Non-string keys (e.g. int) can't be represented as JSON object keys without
-            # losing their type, so fall back to a self-describing keys/values envelope that
-            # _deserialize_dict can reconstruct exactly.
-            return {
-                "__openmodels_dict__": True,
-                "keys": [self.convert_to_serializable(k) for k in value.keys()],
-                "key_types": [type(k).__name__ for k in value.keys()],
-                "values": [self.convert_to_serializable(v) for v in value.values()],
+            # Keys are written as text, as JSON requires; a non-string key's type is recorded
+            # in the dict's type entry ("key_types", see SklearnSerializer._get_dict_types).
+            serialized = {
+                _key_to_text(k): self.convert_to_serializable(v)
+                for k, v in value.items()
             }
+            if len(serialized) != len(value):
+                raise SerializationError(
+                    f"Can't serialize a dict whose keys have the same text "
+                    f"(e.g. 1 and '1'): {list(value)!r}"
+                )
+            return serialized
 
         if isinstance(value, (list, tuple)):
             return [self.convert_to_serializable(v) for v in value]
@@ -103,10 +124,42 @@ class SerializerMixin:
         # when the dict stays in memory or goes through pickle; JSON-like formats have already
         # turned them into lists. Both describe the same nested structure.
         if isinstance(value_type, (list, tuple)) and isinstance(value, (list, tuple)):
+            # A list inside a typed dict has one dtype per element (see the "dict" case below).
+            value_dtypes = (
+                value_dtype
+                if isinstance(value_dtype, list)
+                else [value_dtype] * len(value)
+            )
             return [
-                self.convert_from_serializable(v, t, value_dtype)
-                for v, t in zip(value, value_type)
+                self.convert_from_serializable(v, t, d)
+                for v, t, d in zip(value, value_type, value_dtypes)
             ]
+
+        # Typed containers, written for dicts whose values or keys need restoring: {"dict":
+        # {key: type}} (plus "key_types" for non-string keys) with a dtype dict mirroring it,
+        # and {"tuple": [types]} for a tuple inside one.
+        if isinstance(value_type, dict):
+            if (
+                isinstance(value_type.get("dict"), dict)
+                and set(value_type) <= {"dict", "key_types"}
+                and isinstance(value, dict)
+            ):
+                return self._deserialize_typed_dict(
+                    value,
+                    value_type["dict"],
+                    value_dtype,
+                    value_type.get("key_types"),
+                )
+            if (
+                len(value_type) == 1
+                and isinstance(value_type.get("tuple"), list)
+                and isinstance(value, list)
+            ):
+                return tuple(
+                    self.convert_from_serializable(
+                        value, value_type["tuple"], value_dtype
+                    )
+                )
 
         if isinstance(value_type, str):
             for typ_name, handler in self._get_deserializer_handlers():
@@ -228,19 +281,63 @@ class SerializerMixin:
             )
         return obj
 
+    def _deserialize_typed_dict(
+        self,
+        value: Dict[str, Any],
+        value_types: Dict[str, Any],
+        value_dtypes: Any,
+        key_types: Optional[Dict[str, str]] = None,
+    ) -> Dict[Any, Any]:
+        """Restore each value of a dict from its own type (and dtype, for arrays), and each
+        key listed in `key_types` from its text. A key without a type falls back to
+        `_restore_dict_value`."""
+        dtypes = value_dtypes if isinstance(value_dtypes, dict) else {}
+        key_types = key_types if isinstance(key_types, dict) else {}
+        return {
+            (self._text_to_key(k, key_types[k]) if k in key_types else k): (
+                self.convert_from_serializable(v, value_types[k], dtypes.get(k))
+                if k in value_types
+                else self._restore_dict_value(v)
+            )
+            for k, v in value.items()
+        }
+
+    def _text_to_key(self, text: str, key_type: str) -> Any:
+        """Inverse of `_key_to_text` for a key of type `key_type` (e.g. "int", "float64",
+        "bool", "NoneType"): the text is parsed, then restored with that type's handler.
+        """
+        try:
+            if key_type == "NoneType" and text == "None":
+                return None
+            if key_type in ("bool", "bool_") and text in ("True", "False"):
+                return text == "True"
+            if key_type.startswith(("int", "uint")):
+                parsed: Any = int(text)
+            elif key_type.startswith("float"):
+                parsed = float(text)
+            else:
+                raise ValueError("unsupported key type")
+        except (AttributeError, TypeError, ValueError) as e:
+            raise DeserializationError(
+                f"Invalid dict key {text!r} of type {key_type!r} in the model file"
+            ) from e
+        return self.convert_from_serializable(parsed, key_type)
+
     def _restore_dict_value(self, value: Any) -> Any:
         """Hook for restoring a value inside a plain string-keyed dict, whose values carry no
         type tags of their own, recognised by its exact saved shape: slices here (e.g.
         ColumnTransformer's output_indices_), more in mixins (see ScipySerializerMixin).
-        Anything else is returned unchanged."""
+        Anything else is returned unchanged. Since format v4, dicts whose values need
+        restoring are typed per key instead; this is for files written before that."""
         if isinstance(value, dict) and set(value) == _SLICE_KEYS:
             return self._deserialize_slice(value)
         return value
 
     def _deserialize_dict(self, value: Any) -> Any:
-        """Deserialize a dict, restoring non-string key types for the envelope produced by
-        convert_to_serializable's dict branch. Values of plain string-keyed dicts (the common
-        case, including dicts produced by older openmodels versions) go through
+        """Deserialize a dict tagged "dict". Files written before format v4 saved dicts with
+        non-string keys as an `__openmodels_dict__` keys/values envelope, rebuilt here with
+        its key types (newer files type such keys in the dict's type entry instead, see
+        `_deserialize_typed_dict`). Values of plain string-keyed dicts go through
         `_restore_dict_value`, which leaves them unchanged unless a mixin recognises them.
         """
         if isinstance(value, dict) and value.get("__openmodels_dict__"):

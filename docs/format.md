@@ -14,7 +14,7 @@ requirements, and `README.md`'s Security section for the short version.
 | `estimator_class` | `str` | The model's class name, e.g. `"LogisticRegression"`. Together with `estimator_package`, looked up against a registry of known scikit-learn (and registered custom) classes on deserialize. Nothing named by the file is ever imported: an unregistered class raises `UnsupportedEstimatorError`. |
 | `estimator_package` | `str` | The top-level package the class comes from (`cls.__module__.split(".")[0]`), e.g. `"sklearn"`, `"chemotools"`, or `"__main__"` for a class defined in a script or notebook. Classes are resolved by `(estimator_package, estimator_class)`, so two classes with the same name from different packages (scikit-learn's and chemotools' `MinMaxScaler`) coexist. The top-level package is used rather than the full module path because scikit-learn's real modules are private and get renamed between releases. Since format `4`; a node without it resolves by bare name, with a registered custom class winning over a built-in one of the same name (and a `UserWarning` when the name is ambiguous). |
 | `params` | `dict` | The estimator's constructor parameters, from `model.get_params(deep=False)`. |
-| `param_types` | `dict` | `{param_name: type(value).__name__}` for every entry in `params` - lets the deserializer reconstruct types JSON can't represent natively (e.g. `tuple`). |
+| `param_types` | `dict` | `{param_name: type(value).__name__}` for every entry in `params` - lets the deserializer reconstruct types JSON can't represent natively (e.g. `tuple`). Nested lists and dicts get nested types (see [Values inside dicts](#values-inside-dicts)). |
 | `param_dtypes` | `dict` | Like `param_types`, but for numpy dtypes specifically (e.g. a `np.dtype` param), when applicable. |
 | `attributes` | `dict` | The model's *fitted* state - every public attribute following scikit-learn's trailing-underscore convention (`coef_`, `classes_`, ...), plus a small per-class allowlist of private attributes some estimators need at predict/transform time (see `ATTRIBUTE_EXCEPTIONS` in `sklearn_serializer.py`). Omitted entirely if the model hasn't been fit yet. |
 | `attribute_types` | `dict` | Like `param_types`, for `attributes`. |
@@ -137,6 +137,45 @@ A model whose classes come from a registered third-party package lists that pack
 
 ## Nested and composite estimators
 
+## Values inside dicts
+
+A dict param or attribute (`FunctionTransformer(kw_args=...)`, a search's `cv_results_`,
+`Voting*`'s `named_estimators_`, `class_weight`, ...) is saved as a plain JSON object. When every
+key is a string and every value is plain JSON (`str`, `int`, `float`, `bool`, `None`, or lists
+of them), its type is just `"dict"`. Otherwise the type is `{"dict": {key: type}}`, using the same tags as everywhere else,
+and the dtype entry mirrors the dict with the dtypes of its arrays:
+
+```json
+"params":       {"kw_args": {"x": [1.0, 2.0], "pair": [1, 2], "n": 3}},
+"param_types":  {"kw_args": {"dict": {"x": "ndarray", "pair": {"tuple": ["int", "int"]}, "n": "int"}}},
+"param_dtypes": {"kw_args": {"x": "float32"}}
+```
+
+Inside such a dict:
+
+- a tuple is typed `{"tuple": [types]}` (a list of types means a list);
+- a nested dict is typed the same way, recursively, with a nested dtype dict; a list's dtype
+  entry is a list with one entry per element;
+- a scikit-learn `Bunch` is typed `{"Bunch": {key: type}}`, and always is, so it loads as a
+  `Bunch`;
+- a masked array (`cv_results_["param_*"]`) is typed `"MaskedArray"` and saved as
+  `{"data", "mask", "shape", "dtype"}`, plus `"types"` (one per element) for object arrays,
+  whose masked slots are written as `null`.
+
+Non-string keys (`int`, `float`, `bool`, `None`, NumPy scalars) are written as text, as JSON
+requires, and their types go in a `"key_types"` entry next to `"dict"` (string keys aren't
+listed). For `class_weight={0: 1.0, 1: 3.0}`:
+
+```json
+"params":      {"class_weight": {"0": 1.0, "1": 3.0}},
+"param_types": {"class_weight": {"dict": {"0": "float", "1": "float"}, "key_types": {"0": "int", "1": "int"}}}
+```
+
+Other keys (e.g. tuples), and keys whose text is the same (`1` and `"1"` in one dict), can't be
+written: `serialize()` raises `SerializationError`. Files written before v4 saved dicts with
+non-string keys as an `{"__openmodels_dict__": true, "keys", "key_types", "values"}` envelope
+tagged `"dict"`; it is still read.
+
 A meta-estimator that holds other estimators - a `Pipeline` step, a `VotingClassifier`'s
 `estimators`, a `ColumnTransformer`'s `transformers` - doesn't get a special graph
 representation. Wherever a `BaseEstimator` value appears (inside `params` or `attributes`), it's
@@ -208,9 +247,15 @@ package of the class the file targets, e.g. `"sklearn"`). Every `attributes` blo
   `estimator_class`, and classes are resolved by `(package, class name)` - before, a registered
   custom class silently replaced a built-in one with the same name. Files without the field
   (v1-v3) still resolve by bare name with the old rule (custom class wins), now warning when the
-  name is ambiguous. Type tags in `param_types`/`attribute_types` are unchanged (still the class
-  name), so openmodels 0.2.x readers still load v4 files, with only the "newer format version"
-  warning.
+  name is ambiguous. Dicts whose values need restoring are typed per key, and non-string keys
+  are written as text with a `"key_types"` entry instead of the `__openmodels_dict__` envelope
+  (see [Values inside dicts](#values-inside-dicts)) - before, values loaded as plain JSON
+  (arrays and tuples as lists, estimators as raw dicts). Dicts of plain values with string keys
+  keep the `"dict"` tag, and older files load as before. openmodels 0.2.x readers still load
+  v4 files, with the "newer format version" warning, but don't know the new types: dict values
+  load as plain JSON, as they always did, and non-string keys as strings - e.g. a loaded
+  `class_weight={0: 1.0}` becomes `{"0": 1.0}`, which still predicts but makes refitting fail
+  with scikit-learn's "classes are not in class_weight" error.
 
 ## Why not ONNX or PMML?
 
