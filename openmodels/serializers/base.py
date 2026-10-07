@@ -248,6 +248,17 @@ class SerializerMixin:
             raise SerializationError(
                 f"Can't serialize callable {func!r}: it has no importable module and name"
             )
+        # A bound method can only be saved by name when its module exposes that very method
+        # (np.random.rand is the global RandomState's); otherwise the object it's bound to,
+        # e.g. a fitted scaler's fit_transform, would be lost.
+        if (
+            inspect.ismethod(func)
+            and getattr(sys.modules.get(module), name, None) is not func
+        ):
+            raise SerializationError(
+                f"Can't serialize bound method {func!r}: only functions a module exposes by "
+                f"name can be saved, not methods of an object"
+            )
         return {"module": module, "name": name}
 
     def _allowed_function_roots(self) -> Set[str]:
@@ -270,7 +281,8 @@ class SerializerMixin:
         (`_allowed_function_roots`), and only modules the user explicitly trusted
         (`_is_trusted_function_module`) may be imported. Importing an arbitrary module would
         run its import-time side effects. Private names, ``__main__`` modules and anything
-        that isn't a plain function, builtin or NumPy ufunc are refused.
+        that isn't a plain function, builtin, NumPy ufunc or a bound method the module exposes
+        by name (np.random.rand) are refused.
         """
         module_name, name = data.get("module"), data.get("name")
         obj = None
@@ -290,6 +302,7 @@ class SerializerMixin:
             inspect.isfunction(obj)
             or inspect.isbuiltin(obj)
             or isinstance(obj, np.ufunc)
+            or inspect.ismethod(obj)
         ):
             raise DeserializationError(
                 f"function '{module_name}.{name}' is not allowed; pass "
@@ -389,9 +402,11 @@ class SerializerMixin:
             ("dict", self._deserialize_dict),
             ("function", self._deserialize_function),
             # NumPy ufuncs (np.log1p, scipy.special.expit) and C builtins (abs) are tagged by
-            # their own type name; _deserialize_function accepts both under the allowlist.
+            # their own type name, and bound methods (np.random.rand) "method";
+            # _deserialize_function accepts them under the allowlist.
             ("ufunc", self._deserialize_function),
             ("builtin_function_or_method", self._deserialize_function),
+            ("method", self._deserialize_function),
         ]
 
 

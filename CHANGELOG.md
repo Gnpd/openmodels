@@ -159,6 +159,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   array, but only when the values alone would rebuild an array with another dtype, since
   openmodels 0.2.2 can't read that list: it still reads every file it read correctly before.
   Re-save older files
+- Bound methods passed as parameters (e.g. `FunctionTransformer(func=np.random.rand)`) loaded
+  as raw dicts, so the model failed only when called. Methods a module exposes by name, such as
+  `np.random.rand`, now load as themselves (the function allowlist applies). Methods of an
+  object (a fitted estimator's `fit_transform`, your own instance's or class's methods, a
+  `RandomState` you created) lose that object when saved by name, so `serialize()` now raises
+  `SerializationError` for them; files written by earlier versions holding one raise
+  `DeserializationError` on load
 
 ### Added
 

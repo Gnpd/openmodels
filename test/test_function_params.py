@@ -93,6 +93,54 @@ def test_builtin_allowed_when_trusted():
     assert loaded.func is abs
 
 
+# ==== bound methods ====
+
+
+class _Holder:
+    def method(self, x):
+        return x
+
+    @classmethod
+    def class_method(cls, x):
+        return x
+
+
+@pytest.mark.parametrize("func", [np.random.rand, np.random.normal])
+def test_module_level_bound_method_roundtrips(func):
+    # np.random.rand is a method of NumPy's global RandomState that numpy.random exposes.
+    model = FunctionTransformer(func=func)
+    assert _roundtrip(model).func is func
+
+
+@pytest.mark.parametrize(
+    "func",
+    [
+        FunctionTransformer().fit_transform,
+        _Holder().method,
+        _Holder.class_method,
+        np.random.RandomState(0).rand,
+    ],
+    ids=["estimator-method", "instance-method", "classmethod", "other-randomstate"],
+)
+def test_method_of_an_object_fails_at_save(func):
+    with pytest.raises(SerializationError, match="Can't serialize bound method"):
+        SklearnSerializer().serialize(FunctionTransformer(func=func))
+
+
+def test_method_written_by_earlier_versions_loads_or_raises():
+    # Earlier versions saved any bound method by its module and name, and loaded it as a raw
+    # dict. One its module exposes loads; others, which lost their object, raise.
+    serializer = SklearnSerializer()
+    loaded = serializer.convert_from_serializable(
+        {"module": "numpy.random", "name": "rand"}, "method"
+    )
+    assert loaded is np.random.rand
+    with pytest.raises(DeserializationError, match="sklearn.base.fit_transform"):
+        serializer.convert_from_serializable(
+            {"module": "sklearn.base", "name": "fit_transform"}, "method"
+        )
+
+
 # ==== NumPy array functions ====
 
 

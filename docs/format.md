@@ -137,63 +137,6 @@ A model whose classes come from a registered third-party package lists that pack
 
 ## Nested and composite estimators
 
-## Values inside dicts
-
-A dict param or attribute (`FunctionTransformer(kw_args=...)`, a search's `cv_results_`,
-`Voting*`'s `named_estimators_`, `class_weight`, ...) is saved as a plain JSON object. When every
-key is a string and every value is plain JSON (`str`, `int`, `float`, `bool`, `None`, or lists
-of them), its type is just `"dict"`. Otherwise the type is `{"dict": {key: type}}`, using the same tags as everywhere else,
-and the dtype entry mirrors the dict with the dtypes of its arrays:
-
-```json
-"params":       {"kw_args": {"x": [1.0, 2.0], "pair": [1, 2], "n": 3}},
-"param_types":  {"kw_args": {"dict": {"x": "ndarray", "pair": {"tuple": ["int", "int"]}, "n": "int"}}},
-"param_dtypes": {"kw_args": {"x": "float32"}}
-```
-
-Inside such a dict:
-
-- a tuple is typed `{"tuple": [types]}` (a list of types means a list);
-- a nested dict is typed the same way, recursively, with a nested dtype dict; a list's dtype
-  entry is a list with one entry per element;
-- a scikit-learn `Bunch` is typed `{"Bunch": {key: type}}`, and always is, so it loads as a
-  `Bunch`;
-- a masked array (`cv_results_["param_*"]`) is typed `"MaskedArray"` and saved as
-  `{"data", "mask", "shape", "dtype"}`, plus `"types"` (one per element) for object arrays,
-  whose masked slots are written as `null`.
-
-Non-string keys (`int`, `float`, `bool`, `None`, NumPy scalars) are written as text, as JSON
-requires, and their types go in a `"key_types"` entry next to `"dict"` (string keys aren't
-listed). For `class_weight={0: 1.0, 1: 3.0}`:
-
-```json
-"params":      {"class_weight": {"0": 1.0, "1": 3.0}},
-"param_types": {"class_weight": {"dict": {"0": "float", "1": "float"}, "key_types": {"0": "int", "1": "int"}}}
-```
-
-Other keys (e.g. tuples), and keys whose text is the same (`1` and `"1"` in one dict), can't be
-written: `serialize()` raises `SerializationError`. Files written before v4 saved dicts with
-non-string keys as an `{"__openmodels_dict__": true, "keys", "key_types", "values"}` envelope
-tagged `"dict"`; it is still read.
-
-## Lists of arrays
-
-A list of arrays (e.g. an MLP's `coefs_`) is typed `["ndarray", ...]`. Its dtype entry is
-normally `""`, and each array is rebuilt from its values (floats as `float64`, ints as the
-default int). When that would give an array another dtype - a `float32` MLP, `uint8` or `int16`
-arrays - the dtype entry lists one dtype per element instead (`null` for an element that isn't
-an array):
-
-```json
-"attribute_types":  {"coefs_": ["ndarray", "ndarray"]},
-"attribute_dtypes": {"coefs_": ["float32", "float32"]}
-```
-
-openmodels 0.2.2 can't read a dtype list, so it's only written when needed: 0.2.2 still reads
-every list of arrays it read correctly before, and fails on the ones it would have widened.
-Arrays of strings or objects inside a list are rebuilt from their values, as before (a list of
-`object` arrays of strings loads as string arrays).
-
 A meta-estimator that holds other estimators - a `Pipeline` step, a `VotingClassifier`'s
 `estimators`, a `ColumnTransformer`'s `transformers` - doesn't get a special graph
 representation. Wherever a `BaseEstimator` value appears (inside `params` or `attributes`), it's
@@ -266,14 +209,7 @@ package of the class the file targets, e.g. `"sklearn"`). Every `attributes` blo
   custom class silently replaced a built-in one with the same name. Files without the field
   (v1-v3) still resolve by bare name with the old rule (custom class wins), now warning when the
   name is ambiguous. Dicts whose values need restoring are typed per key, and non-string keys
-  are written as text with a `"key_types"` entry instead of the `__openmodels_dict__` envelope
-  (see [Values inside dicts](#values-inside-dicts)) - before, values loaded as plain JSON
-  (arrays and tuples as lists, estimators as raw dicts). Dicts of plain values with string keys
-  keep the `"dict"` tag, and older files load as before. openmodels 0.2.x readers still load
-  v4 files, with the "newer format version" warning, but don't know the new types: dict values
-  load as plain JSON, as they always did, and non-string keys as strings - e.g. a loaded
-  `class_weight={0: 1.0}` becomes `{"0": 1.0}`, which still predicts but makes refitting fail
-  with scikit-learn's "classes are not in class_weight" error.
+  are written as text with a `"key_types"` entry instead of the `__openmodels_dict__` envelope - before, values loaded as plain JSON (arrays and tuples as lists, estimators as raw dicts). Dicts of plain values with string keys keep the `"dict"` tag, and older files load as before. openmodels 0.2.x readers still load v4 files, with the "newer format version" warning, but don't know the new types: dict values load as plain JSON, as they always did, and non-string keys as strings - e.g. a loaded `class_weight={0: 1.0}` becomes `{"0": 1.0}`, which still predicts but makes refitting fail with scikit-learn's "classes are not in class_weight" error.
 
 ## Why not ONNX or PMML?
 
