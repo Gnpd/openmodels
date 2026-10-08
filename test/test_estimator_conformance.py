@@ -221,6 +221,25 @@ KNOWN_ROUNDTRIP_XFAILS.update(
     )
 )
 
+# Resuming training after loading isn't supported: partial_fit after fit needs running training
+# state (e.g. MiniBatchKMeans._counts) that openmodels doesn't save, since a loaded model is meant
+# for inference. check_fit_score_takes_y calls partial_fit on the already-fitted, round-tripped
+# instance. If resuming training becomes supported, these flip to XPASS (strict).
+_RESUME_TRAINING_REASON = (
+    "partial_fit after loading needs running training state (e.g. MiniBatchKMeans._counts) "
+    "that isn't saved; resuming training on a loaded model isn't supported."
+)
+KNOWN_ROUNDTRIP_XFAILS.update(
+    _entries(
+        _RESUME_TRAINING_REASON,
+        {
+            "MiniBatchDictionaryLearning": ["check_fit_score_takes_y"],
+            "MiniBatchKMeans": ["check_fit_score_takes_y"],
+            "MiniBatchNMF": ["check_fit_score_takes_y"],
+        },
+    )
+)
+
 
 def _check_name(check) -> str:
     return getattr(check, "func", check).__name__
@@ -250,6 +269,28 @@ PER_CHECK_CONSTRUCTOR_OVERRIDES: dict = {
         "n_neighbors": 20
     },
 }
+
+# With their default tol=1e-4 and max_iter=1000, the coordinate-descent CV estimators stop
+# short of the exact solution on the sample-weight equivalence checks' data: locally the final
+# refit hits max_iter (ConvergenceWarning), while on CI (Linux, Python 3.13) LassoCV stopped
+# within tol without a warning. Either way, the weighted and repeated fits stop at different
+# points, so they only agree when every floating-point operation happens in the same order:
+# the check passed locally but failed for LassoCV on CI, with predictions up to 0.0024 apart.
+# With these settings every fit converges to the exact solution (a few thousand iterations), so
+# the weighted and repeated fits coincide on any platform.
+_CONVERGED_COORDINATE_DESCENT = {"max_iter": 100_000, "tol": 1e-10}
+PER_CHECK_CONSTRUCTOR_OVERRIDES.update(
+    {
+        (estimator_name, check_name): _CONVERGED_COORDINATE_DESCENT
+        for estimator_name in [
+            "ElasticNetCV",
+            "LassoCV",
+            "MultiTaskElasticNetCV",
+            "MultiTaskLassoCV",
+        ]
+        for check_name in _BOTH_SAMPLE_WEIGHT_CHECKS
+    }
+)
 
 
 @parametrize_with_checks(ESTIMATORS)

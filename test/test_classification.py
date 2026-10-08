@@ -7,8 +7,11 @@ from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTI
 from test._estimator_construction import BASE_CLASSIFIER, CONSTRUCTOR_ARGS
 
 # Get all classifier estimators, filtering out not supported classifiers
-CLASSIFIERS = [cls for name, cls in all_estimators(type_filter="classifier")
-        if name not in NOT_SUPPORTED_ESTIMATORS]
+CLASSIFIERS = [
+    cls
+    for name, cls in all_estimators(type_filter="classifier")
+    if name not in NOT_SUPPORTED_ESTIMATORS
+]
 
 # Define constants
 N_SAMPLES = 50
@@ -41,6 +44,7 @@ def data():
 
     return x, y
 
+
 @pytest.mark.parametrize("Classifier", CLASSIFIERS)
 def test_classifier(Classifier, data):
     x, y = data
@@ -56,11 +60,18 @@ def test_classifier(Classifier, data):
         args.update(CONSTRUCTOR_ARGS["ClassifierChain"])
         y_multi = np.column_stack([(y == i).astype(int) for i in np.unique(y)])
         y = y_multi
-    elif Classifier.__name__ in ["FixedThresholdClassifier", "TunedThresholdClassifierCV"]:
+    elif Classifier.__name__ in [
+        "FixedThresholdClassifier",
+        "TunedThresholdClassifierCV",
+    ]:
         args.update(CONSTRUCTOR_ARGS[Classifier.__name__])
         y_binary = (y == 0).astype(int)
         y = y_binary
-    elif Classifier.__name__ in ["OneVsOneClassifier", "OutputCodeClassifier", "SelfTrainingClassifier"]:
+    elif Classifier.__name__ in [
+        "OneVsOneClassifier",
+        "OutputCodeClassifier",
+        "SelfTrainingClassifier",
+    ]:
         args.update(CONSTRUCTOR_ARGS[Classifier.__name__])
     elif Classifier.__name__ in ["MultiOutputClassifier", "OneVsRestClassifier"]:
         args.update(CONSTRUCTOR_ARGS[Classifier.__name__])
@@ -73,7 +84,8 @@ def test_classifier(Classifier, data):
         args.update(CONSTRUCTOR_ARGS["VotingClassifier"])
 
     classifier = Classifier(**args)
-    
+
     # Run the test model
-    run_test_model(classifier, x, y, None, None, f"{Classifier.__name__.lower()}.json", abs)
- 
+    run_test_model(
+        classifier, x, y, None, None, f"{Classifier.__name__.lower()}.json", abs
+    )

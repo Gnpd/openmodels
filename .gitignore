@@ -66,3 +66,4 @@ CLAUDE.md
 # Sphinx documentation build output #
 ##################################
 docs/_build/
+local/

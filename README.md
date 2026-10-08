@@ -127,6 +127,12 @@ for the full breakdown by category, and the
 [serialized format reference](https://gnpd.github.io/openmodels/format.html) for what actually
 gets written to disk.
 
+Loaded models are meant for inference. Continuing to train one (`partial_fit`, `warm_start`)
+works for most estimators, but not yet for a few (the MiniBatch estimators, MLP `partial_fit`,
+gradient boosting `warm_start`) - see
+[Resuming Training](https://gnpd.github.io/openmodels/supported_models.html#resuming-training).
+Full support is planned for 0.3.
+
 You can also retrieve the list programmatically using the `SklearnSerializer.all_estimators()` method:
 
 ```python

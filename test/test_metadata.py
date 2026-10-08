@@ -260,7 +260,9 @@ def test_package_version_mismatch_warns(monkeypatch):
     serialized = serializer.serialize(model)
     serialized["metadata"]["packages"]["somepkg"] = "1.0.0"
     monkeypatch.setattr(
-        SklearnSerializer, "_resolve_package_version", staticmethod(lambda name: "2.0.0")
+        SklearnSerializer,
+        "_resolve_package_version",
+        staticmethod(lambda name: "2.0.0"),
     )
 
     with pytest.warns(UserWarning, match="package 'somepkg'"):
@@ -274,7 +276,9 @@ def test_v2_producers_map_still_checked(monkeypatch):
     metadata["producers"] = {**metadata.pop("packages"), "somepkg": "1.0.0"}
     metadata["openmodels_format_version"] = 2
     monkeypatch.setattr(
-        SklearnSerializer, "_resolve_package_version", staticmethod(lambda name: "2.0.0")
+        SklearnSerializer,
+        "_resolve_package_version",
+        staticmethod(lambda name: "2.0.0"),
     )
 
     with pytest.warns(UserWarning, match="package 'somepkg'"):

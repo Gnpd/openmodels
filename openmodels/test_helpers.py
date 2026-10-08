@@ -18,7 +18,7 @@ from typing import (
 )
 import numpy as np
 from numpy import testing
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, clone
 from sklearn.feature_extraction import FeatureHasher
 from sklearn.feature_selection import GenericUnivariateSelect, f_classif
 from sklearn.preprocessing import LabelBinarizer
@@ -65,21 +65,29 @@ def roundtrip_fit(
 ) -> Iterator[None]:
     """
     Monkeypatch fit()/fit_transform()/fit_predict() on the given estimator classes so that,
-    immediately after fitting, the estimator's *fitted* attributes are replaced with the result
-    of an openmodels serialize -> deserialize round-trip. Restores the original methods on exit.
+    immediately after fitting, the estimator's fitted state is replaced with that of an
+    openmodels serialize -> deserialize round-trip. Restores the original methods on exit.
 
     Only methods defined directly on the class are patched (not inherited ones), since e.g.
     TransformerMixin.fit_transform already calls self.fit(...) and would be covered by patching
     fit alone; only classes that override fit_transform/fit_predict directly need those patched.
 
-    Only attributes openmodels actually serializes as fitted state (per
-    SklearnSerializer._extract_estimator_attributes - sklearn's trailing-underscore convention,
-    plus the small set of private attributes some estimators need at predict time) are copied
-    back onto the original instance. Constructor-set parameters are deliberately left untouched:
-    JSON has no tuple type, so e.g. a tuple-valued param would come back as a list after a
-    round-trip even though openmodels never claims to preserve exact param typing - copying it
-    over would make the *test infrastructure* look like a fidelity bug in checks like
-    check_dont_overwrite_parameters.
+    The fitted state is every instance attribute the fit call created or replaced: each is set
+    to the loaded copy's value, or **deleted** if the loaded copy doesn't have it. So an
+    attribute openmodels doesn't save is missing afterwards, exactly as on a really loaded
+    model, and any later method that needs it fails. Two kinds of attribute are kept as they
+    are:
+
+    - constructor parameters: JSON has no tuple type, so e.g. a tuple-valued param would come
+      back as a list, and copying it over would make the *test infrastructure* look like a
+      fidelity bug in checks like check_dont_overwrite_parameters;
+    - attributes the fit call left untouched (the same object before and after), such as the
+      `set_output` configuration, metadata requests, or a parent estimator's callback context.
+      An attribute fit mutates in place without rebinding counts as untouched, so this can't
+      see it.
+
+    Nested estimators held in parameters (e.g. a Pipeline's steps) are fitted in place and are
+    only round-tripped if their own class is passed too.
 
     This lets sklearn's own estimator-specific test suites be reused unmodified against
     round-tripped models: any assertion they make about a fitted estimator becomes, implicitly,
@@ -89,13 +97,20 @@ def roundtrip_fit(
     manager = SerializationManager(serializer)
     originals: dict = {}
 
-    def _roundtrip(instance) -> None:
-        fitted_keys = serializer._extract_estimator_attributes(instance).keys()
+    def _roundtrip(instance, before_fit: dict) -> None:
         serialized = manager.serialize(instance, format_name=format_name)
-        deserialized = manager.deserialize(serialized, format_name=format_name)
-        for key in fitted_keys:
-            if hasattr(deserialized, key):
-                setattr(instance, key, getattr(deserialized, key))
+        loaded = vars(manager.deserialize(serialized, format_name=format_name))
+        params = instance.get_params(deep=False)
+        for key, value in list(vars(instance).items()):
+            if key in params or (key in before_fit and before_fit[key] is value):
+                continue
+            if key in loaded:
+                setattr(instance, key, loaded[key])
+            else:
+                delattr(instance, key)
+        for key, value in loaded.items():
+            if key not in params and key not in vars(instance):
+                setattr(instance, key, value)
 
     class _RoundtripDescriptor:
         """
@@ -121,8 +136,9 @@ def roundtrip_fit(
 
             @functools.wraps(bound_orig)
             def wrapper(*args, **kwargs):
+                before_fit = dict(vars(obj))
                 result = bound_orig(*args, **kwargs)
-                _roundtrip(obj)
+                _roundtrip(obj, before_fit)
                 return result
 
             return wrapper
@@ -308,6 +324,52 @@ def run_test_transformed_data(
         )
 
 
+def _roundtrip_and_compare(
+    fitted_model: FittableModel,
+    x: Union[np.ndarray, csr_matrix],
+    abs: bool,
+    model_name: str,
+) -> None:
+    """
+    Serialize `fitted_model` to JSON, deserialize it (in memory and through a file), and check
+    that both copies predict/transform `x` exactly like the original. Assertion errors are
+    prefixed with `model_name`, so a failure says which fit (e.g. dense or sparse) it was.
+    """
+    manager = SerializationManager(SklearnSerializer())
+    serialized_model = manager.serialize(fitted_model, format_name="json")
+
+    def compare(deserialized_model) -> None:
+        if isinstance(fitted_model, PredictorModel):
+            run_test_predictions(
+                cast(PredictorModel, fitted_model),
+                cast(PredictorModel, deserialized_model),
+                x,
+                abs,
+            )
+        elif isinstance(fitted_model, TransformerModel):
+            run_test_transformed_data(
+                cast(TransformerModel, fitted_model),
+                cast(TransformerModel, deserialized_model),
+                x,
+            )
+
+    model_file_path = f"./test/temp/{model_name}.json"
+    os.makedirs(os.path.dirname(model_file_path), exist_ok=True)
+    try:
+        compare(manager.deserialize(serialized_model, format_name="json"))
+
+        with open(model_file_path, "w", encoding="utf-8") as f:
+            f.write(serialized_model)
+        with open(model_file_path, "r", encoding="utf-8") as f:
+            serialized_model_from_file = f.read()
+        compare(manager.deserialize(serialized_model_from_file, format_name="json"))
+    except AssertionError as e:
+        raise AssertionError(f"[{model_name}] {e}") from e
+    finally:
+        if os.path.exists(model_file_path):
+            os.remove(model_file_path)
+
+
 def run_test_model(
     model: FittableModel,
     x: Union[np.ndarray, csr_matrix],
@@ -320,10 +382,16 @@ def run_test_model(
     """
     Tests the serialization and deserialization of a scikit-learn model.
 
+    The model is fitted on `x`/`y` and round-tripped. If `x_sparse` and `y_sparse` are both
+    given, a separate copy is also fitted on them and round-tripped, compared on `x_sparse`.
+    Each fit uses its own clone of `model` (which is left unfitted): fitting both on one
+    instance would overwrite the dense fit, and sparse input changes what many estimators
+    learn (e.g. neighbors estimators then use brute force instead of a search tree).
+
     Parameters
     ----------
     model : Union[BaseEstimator, ModelType]
-        The scikit-learn model to test.
+        The scikit-learn model to test. Not modified.
     x : Union[np.ndarray, csr_matrix]
         The training input samples.
     y : np.ndarray
@@ -331,78 +399,20 @@ def run_test_model(
     x_sparse : Optional[Union[np.ndarray, csr_matrix]]
         The sparse training input samples.
     y_sparse : np.ndarray or None
-        The sparse target values.
+        The sparse target values. The sparse fit is only tested when this is given.
     model_name : str
         The name of the file to save the serialized model to.
     abs : bool, default=False
         Whether to take the absolute value of the input data before fitting the model.
     """
-    # Always ensure input data is in correct format, regardless of type
     x = ensure_correct_sparse_format(x)
-    if x_sparse is not None:
-        x_sparse = ensure_correct_sparse_format(x_sparse)
-
-    # Fit and test the model
-    fitted_model = fit_model(model, x, y, abs)
+    dense_model = fit_model(clone(model), x, y, abs)
+    _roundtrip_and_compare(dense_model, x, abs, model_name)
 
     if x_sparse is not None and y_sparse is not None:
-        fit_model(model, x_sparse, y_sparse, abs)
-
-    # Create a SerializationManager instance
-    manager = SerializationManager(SklearnSerializer())
-
-    # Serialize and deserialize the model
-    serialized_model = manager.serialize(fitted_model, format_name="json")
-    deserialized_model = manager.deserialize(serialized_model, format_name="json")
-
-    # Test the deserialized model with properly formatted data
-    if isinstance(model, PredictorModel):
-        run_test_predictions(
-            cast(PredictorModel, fitted_model),
-            cast(PredictorModel, deserialized_model),
-            x,  # x is already properly formatted
-            abs,
-        )
-    elif isinstance(model, TransformerModel):
-        run_test_transformed_data(
-            cast(TransformerModel, fitted_model),
-            cast(TransformerModel, deserialized_model),
-            x,  # x is already properly formatted
-        )
-
-    # Serialize and deserialize the model to/from a file
-    model_file_path = f"./test/temp/{model_name}.json"
-
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(model_file_path), exist_ok=True)
-
-    with open(model_file_path, "w", encoding="utf-8") as f:
-        f.write(serialized_model)
-
-    with open(model_file_path, "r", encoding="utf-8") as f:
-        serialized_model_from_file = f.read()
-
-    deserialized_model_from_file = manager.deserialize(
-        serialized_model_from_file, format_name="json"
-    )
-
-    # Test the deserialized model from file
-    if isinstance(model, PredictorModel):
-        run_test_predictions(
-            cast(PredictorModel, fitted_model),
-            cast(PredictorModel, deserialized_model_from_file),
-            x,
-            abs,  # Pass the abs parameter to run_test_predictions
-        )
-    elif isinstance(model, TransformerModel):
-        run_test_transformed_data(
-            cast(TransformerModel, fitted_model),
-            cast(TransformerModel, deserialized_model_from_file),
-            x,
-        )
-
-    # Clean up the temporary file
-    os.remove(model_file_path)
+        x_sparse = ensure_correct_sparse_format(x_sparse)
+        sparse_model = fit_model(clone(model), x_sparse, y_sparse, abs)
+        _roundtrip_and_compare(sparse_model, x_sparse, abs, f"{model_name}_sparse")
 
 
 def create_test_data(

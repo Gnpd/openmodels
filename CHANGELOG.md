@@ -5,6 +5,180 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-10-07
+
+### Security
+
+- **Breaking:** functions referenced by a model file (e.g. a `SelectKBest` `score_func` or a
+  `FunctionTransformer` `func`) are no longer imported from whatever module the file names. A
+  function is only returned if it's a plain function, builtin or NumPy ufunc from an
+  already-imported module of numpy, scipy, scikit-learn or a registered custom estimator's
+  package, and if the module it's defined in (its `__module__`) is one of those too, so a
+  re-export such as `sklearn.datasets._base.makedirs` (`os.makedirs`) is refused; private
+  names and `__main__` are refused. Anything else raises
+  `DeserializationError`. Files referencing your own functions need the new
+  `SklearnSerializer(trusted_function_modules=[...])`, which also allows importing those modules
+- A Gaussian-process kernel's `kernel_type` read from a file must now name a `Kernel` class;
+  before, any callable in `sklearn.gaussian_process.kernels` could be called with the file's
+  parameters
+- A SciPy distribution read from a file must now name a `scipy.stats` distribution generator;
+  before, a crafted file could make loading call any public `scipy.stats` function (e.g.
+  `describe`) with arguments of its choosing
+
+### Changed
+
+- **Wire format v4:** every estimator node records `estimator_package` (the class's top-level
+  package) next to `estimator_class`, and classes are resolved by `(package, class name)`.
+  Files without it (v1-v3) resolve by bare name as before, now warning when the name is
+  ambiguous. Dicts whose values need restoring are typed per key, and non-string keys (e.g.
+  `class_weight={0: 1.0}`) are saved as text with their types next to the value types, instead
+  of a keys/values envelope (see the fix below). openmodels 0.2.2 still loads v4 files but
+  doesn't know these types: dict values load as plain JSON, as they always did, and non-string
+  keys as strings, so such a `class_weight` model predicts but can't be refitted there.
+  `openmodels_format_version` is now `4`. See `docs/format.md`
+- `roundtrip_fit()` test helper (`openmodels/test_helpers.py`): after `fit`, every attribute the
+  fit created or replaced now takes the loaded copy's value, and is **deleted** if the loaded copy
+  lacks it. Before, only attributes openmodels saved were copied back, so state it failed to
+  save stayed on the instance and tests couldn't notice. Constructor parameters and attributes
+  the fit left untouched (e.g. the `set_output` configuration) are kept as before
+
+### Fixed
+
+- A registered custom estimator sharing a scikit-learn class's name (e.g. chemotools'
+  `MinMaxScaler`) silently replaced it on load, giving a model with different output. Both now
+  coexist, also inside one `Pipeline`, and so do two custom classes with the same name
+- `metadata.packages` listed a custom estimator's package for models that only used the
+  scikit-learn class with the same name
+- An unknown estimator class raised a bare `KeyError`; it now raises
+  `UnsupportedEstimatorError`. A nested unknown estimator (e.g. a `Pipeline` step) used to load
+  silently as a raw dict; it now raises too
+- Composite models (`Pipeline`, `FeatureUnion`, `ColumnTransformer`) saved with
+  `format_name="pickle"` loaded with raw-dict steps and couldn't predict; `VotingClassifier`/
+  `StackingClassifier` predicted, but their `estimators` param held raw dicts, breaking
+  `clone()`. The same happened when deserializing a `serialize()` result directly. Pickle files
+  written by earlier versions now load correctly
+- `KNeighborsRegressor`/`RadiusNeighborsRegressor` couldn't predict after load when fitted with
+  a tree (the default for dense data), and every neighbors estimator using a non-euclidean
+  metric with `kd_tree`/`ball_tree` returned different neighbors after load. The search tree
+  is now rebuilt on load from the estimator's own state, exactly as scikit-learn builds it;
+  files written by earlier versions benefit too
+- `run_test_model` test helper (`openmodels/test_helpers.py`): when sparse data was given, it
+  refitted the same instance on it and round-tripped only that sparse fit, so the dense fit
+  (e.g. neighbors search trees) was never tested - which hid the neighbors bug above. Dense and
+  sparse fits are now round-tripped separately, each on its own clone, and the caller's model
+  is no longer fitted
+- NumPy types passed as parameters were loaded as Python `float`, silently changing the model:
+  `CountVectorizer`'s default `dtype=np.int64` produced float64 counts after load, and e.g.
+  `OneHotEncoder(dtype=np.float32)` produced float64 output. They now load as the original
+  NumPy type, including from files written by earlier versions. An unknown type name still
+  loads as `float`, but now with a `UserWarning`
+- Functions passed as parameters: NumPy ufuncs (e.g. `FunctionTransformer(func=np.log1p)`,
+  `TransformedTargetRegressor(func=np.log1p, inverse_func=np.expm1)`) loaded as raw dicts and
+  failed at `transform`; SciPy ufuncs such as `scipy.special.expit`/`logit` couldn't be saved at
+  all; and NumPy array functions other than mean/median/max/min/sum (e.g. `np.std`, `np.clip`,
+  `np.linalg.norm`) were saved but could never be loaded. All of these now load as the original
+  function, including files written by earlier versions (except submodule functions such as
+  `np.linalg.norm`, whose module older files didn't record). Builtins like `abs` now raise a
+  clear `DeserializationError` (they're outside the function allowlist; opt in with
+  `trusted_function_modules`), and a callable that can't be located now fails at save with
+  `SerializationError` instead of `AttributeError`
+- SciPy distributions (e.g. in `RandomizedSearchCV(param_distributions=...)`) always loaded as
+  raw dicts, and discrete ones (`randint`, `poisson`) couldn't be saved at all. Both now
+  round-trip, inside `param_distributions` as a dict or a list of dicts, including continuous
+  ones in files written by earlier versions
+- Neighbors estimators fitted with a `BallTree` (`algorithm="ball_tree"`, or `auto` with metrics
+  such as `haversine`) couldn't be saved (`TypeError`). They now save and load, including inside
+  `Isomap`/`LocallyLinearEmbedding`; the tree is rebuilt on load rather than stored
+- `RadiusNeighborsTransformer` didn't save its training data, so brute-force models couldn't
+  `transform` after load and non-euclidean `kd_tree` ones gave wrong results
+- `KernelDensity` couldn't be used after loading in any configuration: its search tree was
+  restored under the wrong attribute name, without its metric or sample weights, and a
+  `ball_tree` one couldn't be saved. It now round-trips exactly. Weighted models saved by earlier
+  versions load with uniform weights, since their weights were never saved
+- Gaussian-process kernels other than `RBF`, `WhiteKernel`, `Sum`, `Product`, `ConstantKernel`
+  and `DotProduct` (e.g. `Matern`, `RationalQuadratic`, `Exponentiation`, `PairwiseKernel`)
+  loaded as raw dicts when used at top level, breaking `GaussianProcessRegressor`/`Classifier`
+  and `KernelRidge`; kernels with array hyperparameters (a fitted anisotropic `RBF`) or lists of
+  kernels (`CompoundKernel`) couldn't be saved. All now round-trip; an unknown or abstract
+  kernel type raises `DeserializationError`
+- A `ColumnTransformer` couldn't `transform` pandas DataFrames after loading, so a fitted
+  `Pipeline` starting with one couldn't `predict`; `get_feature_names_out` and
+  `set_output(transform="pandas")` failed for any input. Its private column index map is now
+  saved; files written by earlier versions need to be re-saved
+- Any `slice` value (e.g. `ColumnTransformer` columns given as `slice(0, 2)`) crashed on load;
+  slices inside dicts (such as `output_indices_`) now come back as slices too
+- `make_column_selector` column selections can now be saved, including NumPy dtype classes
+  such as `np.number`
+- `SerializationManager.serialize/deserialize/save/load` now raise
+  `SerializationError`/`DeserializationError` (with the original exception as the cause) for
+  malformed input or unserializable models, as documented, instead of `KeyError`,
+  `AttributeError` or `TypeError`. Library errors such as `UnsupportedEstimatorError` are
+  unchanged
+- `custom_estimators=[("Name", cls), ...]` (a list of pairs, as documented) registered nothing;
+  it now works, alongside the existing forms
+- Methods other than `predict`/`transform` failed on loaded models because private state wasn't
+  saved:
+  - `HistGradientBoostingClassifier.predict_proba` (so a soft `VotingClassifier` containing one
+    couldn't `predict`), and `staged_predict*` for both HistGradientBoosting estimators;
+  - `LinearDiscriminantAnalysis.transform`;
+  - `get_feature_names_out` for 24 estimators, including `KMeans`, `Birch`, `Nystroem`,
+    `RBFSampler`, the random projections, `PLS*`/`CCA`, `Isomap` and `Stacking*`, so a
+    `Pipeline` using one of them couldn't `predict` with `set_output(transform="pandas")`;
+  - `HDBSCAN.dbscan_clustering`.
+
+  The HistGradientBoosting and LDA state is rebuilt on load, so files written by earlier
+  versions work too. For `get_feature_names_out` and `HDBSCAN`, re-save older files
+- A loaded `KNNImputer` couldn't impute: `transform` failed on any data with missing values.
+  Re-save older files
+- A loaded `OneClassSVM` fitted on sparse data couldn't `predict`. Re-save older files
+- `transform` on a loaded `NMF` re-created private state it needed, changing the model as a side
+  effect; that state is now saved
+- `score` on a loaded `GridSearchCV`/`RandomizedSearchCV` raised `AttributeError`, and a search
+  with several metrics (`scoring` as a list or dict) couldn't be saved at all. `scorer_` is now
+  rebuilt on load from `scoring`, as `fit` builds it, so files written by earlier versions work
+  too. A `scoring` given as a scorer object (`make_scorer(...)`) still can't be saved
+- Tuple-valued params came back as lists, which scikit-learn rejects for tuple-only params, so
+  some loaded models couldn't be fitted again (e.g. in cross-validation, or when retraining a
+  loaded pipeline): `MinMaxScaler`, `RobustScaler`, `CountVectorizer`, `TfidfVectorizer` and
+  `HashingVectorizer` with default settings, `PatchExtractor` with a `patch_size`, and
+  `SpectralBiclustering` with a tuple `n_clusters`. Params that scikit-learn declares
+  tuple-only are now restored as tuples, for files written by earlier versions too
+- Values inside string-keyed dicts loaded as plain JSON: arrays and tuples came back as lists,
+  NumPy scalars as Python ones, and estimators as raw dicts. This affected e.g.
+  `FunctionTransformer(kw_args=...)`, a search's `cv_results_` (whose arrays came back as lists
+  and its masked `param_*` columns as lists with `None`), and `Voting*`/`Stacking*`'s
+  `named_estimators_`, which was a dict of raw dicts instead of a `Bunch` of estimators. These
+  values are now typed per key and restored exactly, including in dicts with non-string keys;
+  re-save older files. Tuple dict keys, which saved but failed on load, now raise
+  `SerializationError` at save; so does a dict holding keys with the same text (`1` and `"1"`)
+- NumPy scalar values (e.g. `Ridge(alpha=np.float32(0.5))`, or an `np.int64` class label)
+  loaded as Python `float`/`int`; only `np.float64` kept its type. Every NumPy integer and float
+  scalar type now loads as itself, for files written by earlier versions too. `np.bool_` values
+  are now tagged `"bool_"` (NumPy 2 names the type `"bool"`, like Python's), so they load as
+  `np.bool_`; earlier readers load them as Python `bool`, as before
+- Lists of arrays lost their dtypes: a `float32` `MLPRegressor`/`MLPClassifier` loaded with
+  `float64` `coefs_`/`intercepts_` and predicted `float64`. Such lists now record one dtype per
+  array, but only when the values alone would rebuild an array with another dtype, since
+  openmodels 0.2.2 can't read that list: it still reads every file it read correctly before.
+  Re-save older files
+- Bound methods passed as parameters (e.g. `FunctionTransformer(func=np.random.rand)`) loaded
+  as raw dicts, so the model failed only when called. Methods a module exposes by name, such as
+  `np.random.rand`, now load as themselves (the function allowlist applies). Methods of an
+  object (a fitted estimator's `fit_transform`, your own instance's or class's methods, a
+  `RandomState` you created) lose that object when saved by name, so `serialize()` now raises
+  `SerializationError` for them; files written by earlier versions holding one raise
+  `DeserializationError` on load
+- With scikit-learn 1.6, a fitted `ColumnTransformer` whose columns are selected by name (e.g.
+  fitted on a pandas DataFrame) or by boolean mask couldn't be saved: `SerializationError:
+  Object of type _RemainderColsList is not JSON serializable`. Any `collections.UserList` is now
+  saved, and loads, as its plain list
+
+### Added
+
+- `docs/supported_models.md`: "Resuming Training" section. Continuing to train a loaded model
+  (`partial_fit`, `warm_start`) works for most estimators; the MiniBatch estimators, MLP
+  `partial_fit` and gradient boosting `warm_start` can't resume yet (planned for 0.3)
+
 ## [0.2.2] - 2026-09-22
 
 ### Changed

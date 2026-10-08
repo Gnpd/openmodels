@@ -5,7 +5,19 @@ This module provides a serializer for scikit-learn models, allowing them to be
 converted to and from dictionary representations.
 """
 
-from typing import Any, Callable, Dict, List, Set, Tuple, Type, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Set,
+    Tuple,
+    Type,
+    Optional,
+    Union,
+)
+from collections import UserList
 from importlib.metadata import version as _package_version, PackageNotFoundError
 from datetime import datetime, timezone
 import platform
@@ -15,14 +27,16 @@ import scipy  # type: ignore
 import inspect
 from scipy.sparse import issparse  # type: ignore
 
-from ._custom_estimator import load_custom_estimators
+from ._custom_estimator import iter_custom_estimators, load_custom_estimators
 
 import sklearn
 from sklearn.calibration import _CalibratedClassifier, _SigmoidCalibration
+from sklearn.compose import make_column_selector
 from sklearn.cluster._birch import _CFNode, _CFSubcluster
 from sklearn.cluster._bisect_k_means import _BisectingTree
 from sklearn.ensemble._hist_gradient_boosting.predictor import TreePredictor
 from sklearn.ensemble._hist_gradient_boosting.binning import _BinMapper
+from sklearn.gaussian_process import kernels as _gp_kernels
 from sklearn.gaussian_process.kernels import Kernel
 from sklearn.gaussian_process._gpc import _BinaryGaussianProcessClassifierLaplace
 from sklearn._loss.loss import (
@@ -37,24 +51,47 @@ from sklearn._loss.loss import (
     PinballLoss,
     BaseLoss,
 )
-from sklearn.metrics._scorer import _CurveScorer
+from sklearn.metrics._scorer import _CurveScorer, _MultimetricScorer
 from sklearn.metrics import get_scorer_names, get_scorer
 from sklearn.multiclass import _ConstantPredictor
 from sklearn.tree._tree import Tree
 from sklearn.base import BaseEstimator, check_is_fitted
 from sklearn.exceptions import NotFittedError
+from sklearn.utils import Bunch
 from sklearn.utils.discovery import all_estimators
-from sklearn.neighbors import KDTree
+from sklearn.neighbors import BallTree, KDTree, KernelDensity
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.ensemble import (
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
+)
 
-from openmodels.exceptions import UnsupportedEstimatorError
+# Private, but its tree-building code (NeighborsBase._fit) is identical across TESTED_VERSIONS;
+# see _rebuild_neighbors_tree.
+from sklearn.neighbors._base import NeighborsBase
+
+# Private, but `_get_scorers` (how fit builds scorer_ from `scoring`) is identical across
+# TESTED_VERSIONS; see _rebuild_derived_attributes.
+from sklearn.model_selection._search import BaseSearchCV
+
+from openmodels.exceptions import DeserializationError, UnsupportedEstimatorError
 from openmodels.protocols import ModelSerializer
 from openmodels.serializers.base import (
     NumpySerializerMixin,
     ScipySerializerMixin,
+    _key_to_text,
 )
 import warnings
 
 ConverterFunc = Callable[[Any], Any]
+
+# Fitted attributes a neighbors estimator's search tree is rebuilt from on load.
+_NEIGHBORS_TREE_INPUTS = (
+    "_fit_X",
+    "_fit_method",
+    "effective_metric_",
+    "effective_metric_params_",
+)
 
 LOSS_CLASS_REGISTRY = {
     "AbsoluteError": AbsoluteError,
@@ -67,15 +104,6 @@ LOSS_CLASS_REGISTRY = {
     "HalfTweedieLossIdentity": HalfTweedieLossIdentity,
     "PinballLoss": PinballLoss,
 }
-
-KERNEL_REGISTRY = [
-    "RBF",
-    "WhiteKernel",
-    "Sum",
-    "Product",
-    "ConstantKernel",
-    "DotProduct",
-]
 
 ALL_ESTIMATORS = {
     name: cls for name, cls in all_estimators() if issubclass(cls, BaseEstimator)
@@ -103,7 +131,38 @@ TESTED_VERSIONS = ["1.6.1", "1.7.2", "1.8.0", "1.9.1"]
 # renamed "packages" (always including the domain package). Readers fall back to
 # producer_version as the scikit-learn version, and to "producers", for v1/v2 files only.
 # openmodels_version was dropped: producer_version holds the same value.
-OPENMODELS_FORMAT_VERSION = 3
+# v4: every estimator node (root and nested) records "estimator_package" (the class's top-level
+# package) next to "estimator_class", and classes are resolved by (package, class name), so
+# same-named classes from different packages coexist. Files without it (v1-v3) resolve by bare
+# name, custom estimators winning. Also in v4: a dict whose values need restoring (arrays,
+# tuples, estimators, ...) is typed per key, as {"dict": {key: type}} ({"Bunch": ...} for a
+# scikit-learn Bunch), with a matching {key: dtype} dtypes entry; a tuple inside it is typed
+# {"tuple": [types]}, and a masked array (cv_results_'s param_* columns) "MaskedArray". Non-string
+# keys (e.g. class_weight={0: 1.0}) are written as text, with their types in a "key_types"
+# entry next to "dict"; v1-v3 files wrote such dicts as an `__openmodels_dict__` envelope,
+# which is still read. Dicts of plain JSON values with string keys keep the "dict" tag. v3
+# readers still load v4 files but don't know these types: values load as their saved JSON,
+# and non-string keys as strings.
+OPENMODELS_FORMAT_VERSION = 4
+
+# Type tags whose saved values every format gives back unchanged: a dict whose values all have
+# one of these (or are lists of them) needs no per-key types and keeps the "dict" tag.
+_PLAIN_TYPES = frozenset({"str", "int", "float", "bool", "NoneType"})
+
+
+def _is_plain_type(tag: Any) -> bool:
+    if isinstance(tag, str):
+        return tag in _PLAIN_TYPES
+    if isinstance(tag, list):
+        return all(_is_plain_type(t) for t in tag)
+    return False
+
+
+def _package_of(cls: type) -> str:
+    """Top-level package of a class (e.g. "sklearn", "chemotools", "__main__"). The full
+    module path isn't used: scikit-learn's real modules are private and renamed between
+    releases."""
+    return cls.__module__.split(".")[0]
 
 
 def _openmodels_version() -> str:
@@ -167,9 +226,11 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "PLSCanonical": ["_x_mean", "_x_std", "_y_mean", "_y_std", "_predict_1d"],
     "IsotonicRegression": ["f_"],
     "TransformedTargetRegressor": ["_training_dim"],
+    "StackingRegressor": ["_n_feature_outs"],
     # Clusters:
     "BisectingKMeans": ["_bisecting_tree", "_n_threads", "_X_mean"],
     "Birch": ["_subcluster_norms"],
+    "HDBSCAN": ["_single_linkage_tree_"],
     "KMeans": ["_n_threads"],
     "MiniBatchKMeans": ["_n_threads"],
     # Classifiers:
@@ -197,7 +258,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "RadiusNeighborsClassifier": ["_fit_method", "_fit_X", "_y", "_tree"],
     "RidgeClassifier": ["_label_binarizer"],
     "RidgeClassifierCV": ["_label_binarizer"],
-    "StackingClassifier": ["_label_encoder"],
+    "StackingClassifier": ["_label_encoder", "_n_feature_outs"],
     "SVC": [
         "_sparse",
         "_n_support",
@@ -210,7 +271,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     ],
     "TunedThresholdClassifierCV": ["_curve_scorer"],
     # Transformers:
-    "ColumnTransformer": ["_columns", "_remainder"],
+    "ColumnTransformer": ["_columns", "_remainder", "_transformer_to_input_indices"],
     "OneHotEncoder": [
         "_infrequent_enabled",
         "_drop_idx_after_grouping",
@@ -219,12 +280,13 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     "OrdinalEncoder": ["_missing_indices", "_infrequent_enabled"],
     "KBinsDiscretizer": ["_encoder"],
     "KernelPCA": ["_centerer"],
-    "KNNImputer": ["_mask_fit_X", "_valid_mask"],
+    "KNNImputer": ["_fit_X", "_mask_fit_X", "_valid_mask"],
     "KNeighborsTransformer": ["_fit_method", "_tree", "_fit_X"],
     "PowerTransformer": ["_scaler"],
-    "RadiusNeighborsTransformer": ["_fit_method", "_tree"],
+    "RadiusNeighborsTransformer": ["_fit_method", "_tree", "_fit_X"],
     "SimpleImputer": ["_fit_dtype", "_fill_dtype"],
     "MiniBatchNMF": ["_n_components", "_transform_max_iter", "_beta_loss", "_gamma"],
+    "NMF": ["_n_components", "_beta_loss"],
     "MissingIndicator": ["_n_features", "_precomputed"],
     "MultiLabelBinarizer": ["_cached_dict"],
     "PolynomialFeatures": ["_max_degree", "_n_out_full", "_min_degree"],
@@ -245,6 +307,7 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
         "_gamma",
         "_dual_coef_",
         "_intercept_",
+        "_effective_probability",
     ],
     "NearestNeighbors": ["_fit_method", "_tree", "_fit_X"],
     "LocalOutlierFactor": [
@@ -256,6 +319,36 @@ ATTRIBUTE_EXCEPTIONS: Dict[str, List] = {
     ],
     "TfidfVectorizer": ["_tfidf"],
 }
+
+# Private attributes saved for every estimator that has them as plain instance attributes (a
+# property, as PCA's `_n_features_out` is, is computed and can't be set on load).
+# `_n_features_out` is how ClassNamePrefixFeaturesOutMixin estimators (KMeans, Nystroem, random
+# projections, ...) tell in get_feature_names_out that they're fitted.
+GENERIC_PRIVATE_ATTRIBUTES: List[str] = ["_n_features_out"]
+
+
+def _restore_tuple_param(estimator_cls: type, name: str, value: Any) -> Any:
+    """
+    Turn a param that came back as a list into the tuple its estimator requires. Every format
+    stores tuples as lists (JSON has no tuple type, and the type map recording the tuple goes
+    through JSON too), but scikit-learn's param validation rejects a list for params declared
+    tuple-only - e.g. `MinMaxScaler.feature_range` or `CountVectorizer.ngram_range` - so the
+    loaded model couldn't be fitted again. A param is converted only when its class's
+    `_parameter_constraints` allow `tuple` but not `list` or "array-like"; classes without
+    constraints (most third-party estimators) are left unchanged, and so are params declared
+    "no_validation" (a string, not a list).
+    """
+    if not isinstance(value, list):
+        return value
+    constraints = getattr(estimator_cls, "_parameter_constraints", {}).get(name, [])
+    if (
+        isinstance(constraints, list)
+        and tuple in constraints
+        and list not in constraints
+        and "array-like" not in constraints
+    ):
+        return tuple(value)
+    return value
 
 
 class SklearnSerializer(
@@ -281,9 +374,25 @@ class SklearnSerializer(
         - A callable returning an iterable or dict of (name, class) pairs (e.g., a function like ``all_estimators``).
         - A list or tuple of (name, class) pairs.
         - A dict mapping estimator names to their classes.
+        - A single (name, class) pair, or a list mixing any of the above (e.g.
+          ``[("MyEstimator", MyEstimator), all_estimators]``).
 
         These estimators are merged into the serializer's internal registry for this instance only,
         allowing support for custom or external estimators without affecting the global registry.
+
+        Classes are identified by (top-level package, class name), so a custom class sharing a
+        built-in's name (e.g. chemotools' ``MinMaxScaler``) coexists with it. Only files
+        without ``estimator_package`` (format v1-v3) resolve by bare name, where the custom
+        class wins.
+
+    trusted_function_modules : iterable of str, optional
+        Modules (and their submodules) from which deserialization may import and return
+        functions referenced by the file, e.g. the ``func`` of a ``FunctionTransformer``.
+        By default only already-imported functions from numpy, scipy, scikit-learn and the
+        packages of registered custom estimators are allowed; anything else raises
+        ``DeserializationError``. Functions defined in ``__main__`` are never allowed.
+        Trusting ``"builtins"`` (e.g. for ``func=abs``) makes every builtin loadable,
+        including ``eval``, ``exec`` and ``open``.
 
     References
     ----------
@@ -321,13 +430,43 @@ class SklearnSerializer(
                 Dict[str, Type[BaseEstimator]],
             ]
         ] = None,
+        trusted_function_modules: Iterable[str] = (),
     ):
+        custom_pairs = (
+            list(iter_custom_estimators(custom_estimators)) if custom_estimators else []
+        )
+        # Wrapped in a list: load_custom_estimators treats each list element as one source.
         extra = (
-            load_custom_estimators(custom_estimators, ALL_ESTIMATORS)
-            if custom_estimators
+            load_custom_estimators([custom_pairs], ALL_ESTIMATORS)
+            if custom_pairs
             else {}
         )
-        self._all_estimators: Dict[str, Type] = {**ALL_ESTIMATORS, **extra}
+        # Bare-name index, custom classes winning: only for files without estimator_package
+        # (format v1-v3). _all_estimators is kept as an alias for anything reading it.
+        self._by_name: Dict[str, Type] = {**ALL_ESTIMATORS, **extra}
+        self._all_estimators = self._by_name
+        # (package, class name) index, built from the raw pairs (not `extra`, which merges
+        # same-named classes from different packages and keys by the caller-supplied name).
+        self._by_id: Dict[Tuple[str, str], Type] = {
+            (_package_of(cls), cls.__name__): cls for cls in ALL_ESTIMATORS.values()
+        }
+        for _, cls in custom_pairs:
+            key = (_package_of(cls), cls.__name__)
+            if key in self._by_id and self._by_id[key] is not cls:
+                warnings.warn(
+                    f"Estimator '{key[0]}.{key[1]}' is registered by two different classes; "
+                    f"preferring the later one.",
+                    UserWarning,
+                )
+            self._by_id[key] = cls
+        self._custom_packages: Set[str] = {
+            _package_of(cls) for _, cls in custom_pairs
+        } - {"__main__"}
+        self._trusted_function_modules: Tuple[str, ...] = tuple(
+            trusted_function_modules
+        )
+        # Bare names already warned about as ambiguous during the current deserialize() call.
+        self._ambiguity_warned: Set[str] = set()
         # Scratch state for one deserialize() call: (node, "prev_leaf_"|"next_leaf_") pairs
         # a Birch _CFNode's leaf-chain pointer couldn't resolve within its own subtree (root_
         # and dummy_leaf_ are independently-deserialized top-level attributes; the pointer
@@ -335,6 +474,48 @@ class SklearnSerializer(
         self._birch_pending_leaf_links: List[Tuple[Any, str]] = []
 
     # --- Helpers ---
+    def _allowed_function_roots(self) -> Set[str]:
+        # Registered custom estimators' packages are already imported, so their functions
+        # (e.g. a package's own score functions) resolve without importing anything.
+        return super()._allowed_function_roots() | self._custom_packages
+
+    def _is_trusted_function_module(self, module_name: str) -> bool:
+        return any(
+            module_name == trusted or module_name.startswith(trusted + ".")
+            for trusted in self._trusted_function_modules
+        )
+
+    def _resolve_class(self, data: Dict[str, Any]) -> Type:
+        """
+        Resolve the class of a serialized estimator node by (package, class name), or by bare
+        name for files without "estimator_package" (format v1-v3, custom estimators winning).
+        Only registered classes are reachable: nothing named by the file is ever imported.
+        """
+        name = data["estimator_class"]
+        package = data.get("estimator_package")
+        if package is not None:
+            cls = self._by_id.get((package, name))
+            if cls is None:
+                raise UnsupportedEstimatorError(
+                    f"{package}.{name} is not registered; install '{package}' and pass it "
+                    f"via custom_estimators"
+                )
+            return cls
+
+        cls = self._by_name.get(name)
+        if cls is None:
+            raise UnsupportedEstimatorError(f"Unknown estimator class '{name}'")
+        if name not in self._ambiguity_warned and (
+            sum(1 for _, other in self._by_id if other == name) > 1
+        ):
+            self._ambiguity_warned.add(name)
+            warnings.warn(
+                f"'{name}' resolved to {_package_of(cls)} (custom estimators win for files "
+                f"without estimator_package); re-save the model to record its package",
+                UserWarning,
+            )
+        return cls
+
     def _check_version(self, stored_version: Optional[str]) -> None:
         """
         Check compatibility between stored scikit-learn version and the current environment.
@@ -450,14 +631,18 @@ class SklearnSerializer(
             if name not in NOT_SUPPORTED_ESTIMATORS
         ]
 
-    def _get_nested_types(self, item: Any) -> Any:
+    def _get_nested_types(self, item: Any, in_dict: bool = False) -> Any:
         """
-        Recursively determine the type of elements within nested lists.
+        Recursively determine the type of elements within nested lists and dicts.
 
         Parameters
         ----------
         item : Any
             The item to inspect for nested types.
+        in_dict : bool
+            Whether `item` sits inside a typed dict, where a tuple is typed {"tuple": [...]}
+            so it comes back as a tuple. Elsewhere a tuple is typed as a tuple of its
+            elements' types, which formats save as a list, as before v4.
 
         Returns
         -------
@@ -468,8 +653,17 @@ class SklearnSerializer(
         ---------
 
         [1, [1, 2, [1, 2, 3]], 2] -> ['int',['int','int','ndarray'],'int']
+        {"a": np.zeros(2), "b": (1, 2)} -> {"dict": {"a": "ndarray", "b": {"tuple": ["int", "int"]}}}
+        {"a": 1, "b": [1.0, 2.0]} -> "dict"
 
         """
+        # Before the ndarray checks: a masked array is an ndarray subclass.
+        if isinstance(item, np.ma.MaskedArray):
+            return "MaskedArray"
+
+        if isinstance(item, dict):
+            return self._get_dict_types(item)
+
         # Handle np.ndarray of estimators
         if (
             isinstance(item, np.ndarray)
@@ -489,11 +683,15 @@ class SklearnSerializer(
 
         # Handle tuples explicitly
         if isinstance(item, tuple):
+            if in_dict:
+                return {"tuple": [self._get_nested_types(s, True) for s in item]}
             return tuple(self._get_nested_types(subitem) for subitem in item)
 
-        # Handle lists
+        # Handle lists; a UserList is saved as its plain list (see convert_to_serializable).
+        if isinstance(item, UserList):
+            item = item.data
         if isinstance(item, list):
-            return [self._get_nested_types(subitem) for subitem in item]
+            return [self._get_nested_types(subitem, in_dict) for subitem in item]
 
         elif isinstance(item, BaseEstimator):
             # For estimators, return their class name instead of just 'BaseEstimator'
@@ -510,9 +708,56 @@ class SklearnSerializer(
             # via the csr_matrix(value) constructor, so type(item).__name__ (e.g. "csr_array")
             # would tag a value the deserializer dispatch table has no matching entry for.
             return "csr_matrix"
+        elif isinstance(item, np.bool_):
+            # NumPy 2 names the type "bool", the tag of Python's bool; NumPy 1 named it "bool_".
+            return "bool_"
         else:
             # Return the type name if it's not a list or it's an empty list
             return type(item).__name__
+
+    def _get_dict_types(self, item: dict) -> Any:
+        """
+        Type of a dict: {"dict": {key: type}} when a value needs restoring on load, plus
+        {"key_types": {key: type}} for its non-string keys, which are saved as text (see
+        `_key_to_text`); "dict" when every key is a string and every value plain JSON. A Bunch
+        is always typed {"Bunch": {...}}, so it comes back as a Bunch.
+        """
+        value_types = {
+            _key_to_text(key): self._get_nested_types(value, in_dict=True)
+            for key, value in item.items()
+        }
+        key_types = {
+            _key_to_text(key): self._get_nested_types(key)
+            for key in item
+            if not isinstance(key, str)
+        }
+        if isinstance(item, Bunch):
+            return {"Bunch": value_types}
+        if key_types:
+            return {"dict": value_types, "key_types": key_types}
+        if all(_is_plain_type(t) for t in value_types.values()):
+            return "dict"
+        return {"dict": value_types}
+
+    def _get_nested_dtypes(self, item: Any) -> Any:
+        """dtypes for the values of a typed dict, mirroring it: an array's dtype, a dict of
+        them for a nested dict, a list of them for a list. None when nothing inside needs one
+        (a masked array records its own)."""
+        if isinstance(item, np.ma.MaskedArray):
+            return None
+        if isinstance(item, np.ndarray):
+            return str(item.dtype)
+        if isinstance(item, dict):
+            dtypes = {
+                _key_to_text(key): dtype
+                for key, value in item.items()
+                if (dtype := self._get_nested_dtypes(value)) is not None
+            }
+            return dtypes or None
+        if isinstance(item, (list, tuple)):
+            dtypes_list = [self._get_nested_dtypes(value) for value in item]
+            return dtypes_list if any(d is not None for d in dtypes_list) else None
+        return None
 
     def _get_type_maps(self, values_dict: dict) -> tuple[dict, dict]:
         """
@@ -533,6 +778,13 @@ class SklearnSerializer(
         for key, value in values_dict.items():
             if isinstance(value, tuple):
                 dtypes_map.pop(key, None)  # Remove tuples from dtypes_map
+
+        # A typed dict's dtypes mirror its values (see _get_nested_dtypes).
+        for key, value in values_dict.items():
+            if isinstance(types_map[key], dict):
+                dict_dtypes = self._get_nested_dtypes(value)
+                if dict_dtypes is not None:
+                    dtypes_map[key] = dict_dtypes
 
         return types_map, dtypes_map
 
@@ -556,6 +808,9 @@ class SklearnSerializer(
         # Collect attributes
         attribute_keys = [key for key in dir(estimator) if is_valid_attribute(key)]
         attribute_keys += ATTRIBUTE_EXCEPTIONS.get(estimator.__class__.__name__, [])
+        attribute_keys += [
+            key for key in GENERIC_PRIVATE_ATTRIBUTES if key in vars(estimator)
+        ]
 
         # Prevents attribute exceptions introduced in newer scikit-learn versions from breaking older versions of the serializer
         attributes = {
@@ -564,7 +819,58 @@ class SklearnSerializer(
             if hasattr(estimator, key)
         }
 
+        # A neighbors estimator's search tree is rebuilt on load from its own state (see
+        # _rebuild_neighbors_tree), so a stored tree is never used. A KDTree is still written
+        # only so openmodels 0.2.2 can read the file; no older reader can load a BallTree, so
+        # it's left out (smaller files).
+        if isinstance(estimator, NeighborsBase) and isinstance(
+            attributes.get("_tree"), BallTree
+        ):
+            del attributes["_tree"]
+
+        # A search's scorer_ is rebuilt on load from its `scoring` param (see
+        # _rebuild_derived_attributes). Scorer objects can't be written: a multi-metric
+        # scorer_ (a dict of them) made saving fail.
+        if isinstance(estimator, BaseSearchCV):
+            attributes.pop("scorer_", None)
+
         return attributes
+
+    def convert_from_serializable(
+        self, value: Any, value_type: Any = "none", value_dtype: Optional[str] = None
+    ) -> Any:
+        # Every estimator node goes through _deserialize_core (and so _resolve_class),
+        # whatever its type tag: an unregistered class name has no tag handler and would
+        # otherwise silently come back as a raw dict instead of raising.
+        if (
+            isinstance(value, dict)
+            and "estimator_class" in value
+            and isinstance(value_type, str)
+            and value_type != "dict"
+        ):
+            return self._deserialize_core(value)
+        # Same for Gaussian-process kernels ({"kernel_type", "params"}): routing by content
+        # covers every kernel class, and an unknown kernel raises instead of loading as a dict.
+        if (
+            isinstance(value, dict)
+            and "kernel_type" in value
+            and "params" in value
+            and isinstance(value_type, str)
+            and value_type != "dict"
+        ):
+            return self._deserialize_kernel(value)
+        # A Bunch (e.g. Voting*/Stacking*'s named_estimators_) is typed like a dict, under
+        # its own name (see _get_dict_types).
+        if (
+            isinstance(value_type, dict)
+            and len(value_type) == 1
+            and isinstance(value_type.get("Bunch"), dict)
+            and isinstance(value, dict)
+        ):
+            return Bunch(
+                **self._deserialize_typed_dict(value, value_type["Bunch"], value_dtype)
+            )
+        return super().convert_from_serializable(value, value_type, value_dtype)
 
     # --- Handlers ---
     def _get_serializer_handlers(self):
@@ -572,15 +878,19 @@ class SklearnSerializer(
         return [
             (BaseEstimator, self._serialize_core),
             (BaseLoss, self._serialize_loss),
-            (KDTree, self._serialize_kdtree),
+            ((KDTree, BallTree), self._serialize_search_tree),
             (Kernel, self._serialize_kernel),
             (Tree, self._serialize_tree),
             (TreePredictor, self._serialize_tree_predictor),
+            # Before np.ndarray: a masked array is an ndarray subclass.
+            (np.ma.MaskedArray, self._serialize_masked_array),
             (np.ndarray, self._serialize_estimators_collection),
             (_CalibratedClassifier, self._serialize_calibrated_classifier),
             (_BisectingTree, self._serialize_bisecting_tree),
             (_CurveScorer, self._serialize_curve_scorer),
             (_CFNode, self._serialize_cfnode),
+            # Callable, so it must come before the generic function handler in super().
+            (make_column_selector, self._serialize_column_selector),
         ] + super()._get_serializer_handlers()
 
     def _get_deserializer_handlers(self):
@@ -591,12 +901,7 @@ class SklearnSerializer(
         ]
         # Estimators
         estimator_handlers = [
-            (est_name, self._deserialize_core)
-            for est_name in self._all_estimators.keys()
-        ]
-
-        kernel_handlers = [
-            (kernel_name, self._deserialize_kernel) for kernel_name in KERNEL_REGISTRY
+            (est_name, self._deserialize_core) for est_name in self._by_name.keys()
         ]
         return (
             [
@@ -606,8 +911,9 @@ class SklearnSerializer(
                 ("_CalibratedClassifier", self._deserialize_calibrated_classifier),
                 ("_CurveScorer", self._deserialize_curve_scorer),
                 ("_CFNode", self._deserialize_cfnode),
+                ("make_column_selector", self._deserialize_column_selector),
+                ("MaskedArray", self._deserialize_masked_array),
             ]
-            + kernel_handlers
             + loss_handlers
             + estimator_handlers
             + super()._get_deserializer_handlers()
@@ -646,6 +952,48 @@ class SklearnSerializer(
         node.right = self._deserialize_bisecting_tree(data["right"])
         return node
 
+    def _serialize_masked_array(self, value: np.ma.MaskedArray) -> Dict[str, Any]:
+        """
+        A masked array (a search's cv_results_["param_*"] columns): data, mask, shape and
+        dtype. Masked slots are written as the array's fill value, or None for object arrays,
+        whose elements (strings, None, dicts, estimators, ...) are typed one by one.
+        """
+        mask = np.ma.getmaskarray(value).ravel()
+        serialized: Dict[str, Any] = {
+            "mask": mask.tolist(),
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+        }
+        if value.dtype == np.dtype("O"):
+            items = [
+                None if masked else item
+                for item, masked in zip(value.data.ravel().tolist(), mask)
+            ]
+            serialized["data"] = self.convert_to_serializable(items)
+            serialized["types"] = [
+                self._get_nested_types(item, in_dict=True) for item in items
+            ]
+        else:
+            serialized["data"] = self.convert_to_serializable(value.filled().ravel())
+        return serialized
+
+    def _deserialize_masked_array(self, data: Dict[str, Any]) -> np.ma.MaskedArray:
+        shape = tuple(data["shape"])
+        mask = np.array(data["mask"], dtype=bool).reshape(shape)
+        values: np.ndarray
+        if "types" in data:
+            items = [
+                self.convert_from_serializable(item, item_type)
+                for item, item_type in zip(data["data"], data["types"])
+            ]
+            # Filled one by one: np.array would turn list or tuple elements into dimensions.
+            values = np.empty(len(items), dtype=object)
+            for i, item in enumerate(items):
+                values[i] = item
+        else:
+            values = np.array(data["data"], dtype=np.dtype(data["dtype"]))
+        return np.ma.MaskedArray(values.reshape(shape), mask=mask)
+
     def _serialize_calibrated_classifier(
         self, obj: _CalibratedClassifier
     ) -> Dict[str, Any]:
@@ -661,7 +1009,7 @@ class SklearnSerializer(
         self, data: Dict[str, Any]
     ) -> _CalibratedClassifier:
         estimator = self._deserialize_core(data["estimator"])
-        calibrators = [self.deserialize(c) for c in data["calibrators"]]
+        calibrators = [self._deserialize_core(c) for c in data["calibrators"]]
         classes = np.array(data["classes"])
         method = data["method"]
         return _CalibratedClassifier(
@@ -969,28 +1317,130 @@ class SklearnSerializer(
         params = value.get("params", {})
         return loss_cls(**params)
 
-    def _serialize_kdtree(self, value: KDTree) -> Dict[str, Any]:
+    def _serialize_search_tree(self, value: Union[KDTree, BallTree]) -> Dict[str, Any]:
         """
-        Serializes a KDTree object to a dictionary.
+        Serialize a KDTree/BallTree as the inputs it's rebuilt from: its data and its sample
+        weights (None when unweighted). The weights are stored only inside the tree - e.g.
+        KernelDensity keeps them nowhere else. The metric and leaf_size live on the owning
+        estimator, which rebuilds the tree with them on load (`_rebuild_neighbors_tree`,
+        `_rebuild_kernel_density_tree`). dtype is captured explicitly (same reasoning as
+        _serialize_bisecting_tree) so non-float64 data isn't silently widened by JSON.
         """
-        # For KDTree, we'll use a simpler approach - just serialize the essential data
-        # and let the tree be reconstructed from the data. dtype is captured explicitly
-        # (same reasoning as _serialize_bisecting_tree) so non-float64 data isn't silently
-        # widened by the generic JSON round-trip.
         data = np.array(value.data)
+        sample_weight = value.sample_weight
         return {
             "data": self.convert_to_serializable(data),
             "data_dtype": str(data.dtype),
+            "sample_weight": (
+                None
+                if sample_weight is None
+                else self.convert_to_serializable(np.asarray(sample_weight))
+            ),
         }
 
-    def _deserialize_kdtree(self, kdtree_data: Dict[str, Any]) -> KDTree:
+    def _deserialize_search_tree(
+        self, tree_data: Dict[str, Any], tree_cls: Type[Union[KDTree, BallTree]]
+    ) -> Union[KDTree, BallTree]:
         """
-        Deserializes a dictionary representation of a KDTree back to a KDTree object.
+        Rebuild a KDTree/BallTree from its data and sample weights, with the default metric
+        and leaf_size. Estimators that own a tree rebuild it again with their real metric
+        (see `_serialize_search_tree`). Files written before 0.2.3 have no "sample_weight".
         """
-        data = np.array(kdtree_data["data"], dtype=kdtree_data.get("data_dtype"))
+        data = np.array(tree_data["data"], dtype=tree_data.get("data_dtype"))
+        sample_weight = tree_data.get("sample_weight")
+        return tree_cls(
+            data,
+            sample_weight=None if sample_weight is None else np.asarray(sample_weight),
+        )
 
-        # Create KDTree with data - the tree will be rebuilt automatically
-        return KDTree(data)
+    def _rebuild_kernel_density_tree(self, model: BaseEstimator) -> None:
+        """
+        Rebuild a KernelDensity's `tree_` exactly as `KernelDensity.fit` builds it: the loaded
+        tree's class, data and sample weights, plus the estimator's `metric`, `leaf_size` and
+        `metric_params` (which the loaded tree, built with defaults, lacks).
+        """
+        tree = getattr(model, "tree_", None)
+        if not isinstance(model, KernelDensity) or not isinstance(
+            tree, (KDTree, BallTree)
+        ):
+            return
+        sample_weight = tree.sample_weight
+        model.tree_ = type(tree)(
+            np.asarray(tree.data),
+            metric=model.metric,
+            leaf_size=model.leaf_size,
+            sample_weight=None if sample_weight is None else np.asarray(sample_weight),
+            **(model.metric_params or {}),
+        )
+
+    def _rebuild_neighbors_tree(self, model: BaseEstimator) -> None:
+        """
+        Rebuild a neighbors estimator's search tree (`_tree`) from its own fitted state,
+        exactly as `NeighborsBase._fit` builds it: `KDTree`/`BallTree` over `_fit_X` with
+        `leaf_size`, `effective_metric_` and `effective_metric_params_`. The tree is
+        deterministic in those inputs, so the result is identical to the original.
+
+        Rebuilding instead of restoring a stored tree means files never need to carry one:
+        regressors never stored `_tree` at all, and the trees older files did store were
+        rebuilt as `KDTree(data)`, dropping the metric and leaf_size (wrong neighbors for any
+        non-euclidean metric). Models fitted with `brute` (e.g. on sparse data) have no tree,
+        and files missing any of the inputs are left as they are.
+        """
+        if not isinstance(model, NeighborsBase) or not all(
+            hasattr(model, attr) for attr in _NEIGHBORS_TREE_INPUTS
+        ):
+            return
+        fit_method = model._fit_method
+        if fit_method not in ("kd_tree", "ball_tree"):
+            model._tree = None  # "brute", as NeighborsBase._fit sets it
+            return
+        tree_cls = KDTree if fit_method == "kd_tree" else BallTree
+        model._tree = tree_cls(
+            model._fit_X,
+            model.leaf_size,
+            metric=model.effective_metric_,
+            **model.effective_metric_params_,
+        )
+
+    def _rebuild_derived_attributes(self, model: BaseEstimator) -> None:
+        """
+        Recompute private attributes that `fit` derives from fitted state openmodels does save,
+        exactly as `fit` computes them, so files without them (every file written by 0.2.x)
+        load complete:
+
+        - `HistGradientBoosting*._loss`, needed by `predict_proba` (the regressor's is also
+          saved). `sample_weight` only changes the loss during training, never its link.
+        - `HistGradientBoosting*._n_features`, needed by `staged_predict*`: the input width.
+        - `LinearDiscriminantAnalysis._max_components`, needed by `transform`.
+        - A search's (`GridSearchCV`, ...) `scorer_`, needed by `score`: built from its `scoring`
+          param by `_get_scorers`, as `fit` does. It's never saved (see
+          `_extract_estimator_attributes`).
+        """
+        if isinstance(
+            model, (HistGradientBoostingClassifier, HistGradientBoostingRegressor)
+        ) and hasattr(model, "n_trees_per_iteration_"):
+            if not hasattr(model, "_loss"):
+                model._loss = model._get_loss(sample_weight=None)
+            if not hasattr(model, "_n_features"):
+                model._n_features = model.n_features_in_
+        if (
+            isinstance(model, LinearDiscriminantAnalysis)
+            and hasattr(model, "classes_")
+            and not hasattr(model, "_max_components")
+        ):
+            max_components = min(len(model.classes_) - 1, model.n_features_in_)
+            model._max_components = (
+                max_components if model.n_components is None else model.n_components
+            )
+        if (
+            isinstance(model, BaseSearchCV)
+            and hasattr(model, "multimetric_")
+            and not hasattr(model, "scorer_")
+        ):
+            scorers, _ = model._get_scorers()
+            model.scorer_ = (
+                scorers._scorers if isinstance(scorers, _MultimetricScorer) else scorers
+            )
 
     def _serialize_estimators_collection(
         self, value: Union[np.ndarray, List[BaseEstimator]]
@@ -1049,39 +1499,99 @@ class SklearnSerializer(
 
     def _serialize_kernel(self, kernel: Kernel) -> Dict[str, Any]:
         """
-        Recursively serialize a sklearn.gaussian_process.kernels.Kernel object.
+        Recursively serialize a sklearn.gaussian_process.kernels.Kernel object as its class
+        name and constructor params. Params that are kernels - also inside lists, e.g.
+        CompoundKernel's `kernels` - are serialized recursively; every other value goes through
+        convert_to_serializable (e.g. a fitted anisotropic length_scale ndarray).
         """
-        kernel_type = type(kernel).__name__
-        params = kernel.get_params(deep=False)
-        # Recursively serialize kernel parameters that are also kernels
-        serialized_params = {}
-        for k, v in params.items():
-            if isinstance(v, Kernel):
-                serialized_params[k] = self._serialize_kernel(v)
-            else:
-                serialized_params[k] = v
         return {
-            "kernel_type": kernel_type,
-            "params": serialized_params,
+            "kernel_type": type(kernel).__name__,
+            "params": {
+                k: self._serialize_kernel_value(v)
+                for k, v in kernel.get_params(deep=False).items()
+            },
         }
+
+    def _serialize_kernel_value(self, value: Any) -> Any:
+        if isinstance(value, Kernel):
+            return self._serialize_kernel(value)
+        if isinstance(value, (list, tuple)):
+            return [self._serialize_kernel_value(v) for v in value]
+        return self.convert_to_serializable(value)
 
     def _deserialize_kernel(self, data: Dict[str, Any]) -> Kernel:
         """
-        Recursively deserialize a kernel dict back to a Kernel object.
+        Recursively deserialize a kernel dict back to a Kernel object. `kernel_type` comes from
+        the file, so it must name a concrete Kernel class in sklearn.gaussian_process.kernels
+        (looked up as an attribute of that already-imported module; nothing is imported), never
+        any other callable there.
         """
-        kernel_type = data["kernel_type"]
-        params = data["params"]
-        kernel_cls = getattr(
-            __import__("sklearn.gaussian_process.kernels", fromlist=[kernel_type]),
-            kernel_type,
+        kernel_type = data.get("kernel_type")
+        kernel_cls = (
+            getattr(_gp_kernels, kernel_type, None)
+            if isinstance(kernel_type, str) and not kernel_type.startswith("_")
+            else None
         )
-        deserialized_params = {}
-        for k, v in params.items():
-            if isinstance(v, dict) and "kernel_type" in v:
-                deserialized_params[k] = self._deserialize_kernel(v)
-            else:
-                deserialized_params[k] = v
-        return kernel_cls(**deserialized_params)
+        if not (
+            isinstance(kernel_cls, type)
+            and issubclass(kernel_cls, Kernel)
+            and not inspect.isabstract(kernel_cls)
+        ):
+            raise DeserializationError(f"Unknown kernel type '{kernel_type}'")
+        return kernel_cls(
+            **{
+                k: self._deserialize_kernel_value(v)
+                for k, v in data.get("params", {}).items()
+            }
+        )
+
+    def _deserialize_kernel_value(self, value: Any) -> Any:
+        if isinstance(value, dict) and "kernel_type" in value:
+            return self._deserialize_kernel(value)
+        if isinstance(value, list):
+            return [self._deserialize_kernel_value(v) for v in value]
+        return value
+
+    def _serialize_column_selector(
+        self, selector: make_column_selector
+    ) -> Dict[str, Any]:
+        """
+        Serialize a ColumnTransformer `make_column_selector` as its three settings. A dtype
+        spec is a string ("number"), a type (np.number, float) or a list of these; types are
+        written as `_serialize_type` does.
+        """
+
+        def dtype_spec(spec: Any) -> Any:
+            if isinstance(spec, (list, tuple)):
+                return [dtype_spec(s) for s in spec]
+            if isinstance(spec, type):
+                return self._serialize_type(spec)
+            return spec
+
+        return {
+            "pattern": selector.pattern,
+            "dtype_include": dtype_spec(selector.dtype_include),
+            "dtype_exclude": dtype_spec(selector.dtype_exclude),
+        }
+
+    def _deserialize_column_selector(
+        self, data: Dict[str, Any]
+    ) -> make_column_selector:
+        """Rebuild a `make_column_selector` from its saved settings. Only this fixed class is
+        constructed, and type names go through `_deserialize_type`."""
+
+        def dtype_spec(spec: Any) -> Any:
+            if isinstance(spec, list):
+                return [dtype_spec(s) for s in spec]
+            if isinstance(spec, dict) and "type_name" in spec:
+                return self._deserialize_type(spec)
+            return spec
+
+        return make_column_selector(
+            pattern=data.get("pattern"),
+            dtype_include=dtype_spec(data.get("dtype_include")),
+            dtype_exclude=dtype_spec(data.get("dtype_exclude")),
+        )
 
     def _serialize_curve_scorer(self, scorer: _CurveScorer) -> Dict[str, Any]:
         # Find the scorer name in sklearn.metrics.get_scorer_names()
@@ -1151,6 +1661,7 @@ class SklearnSerializer(
         # Build serializable estimator including extra info
         serialized_estimator = {
             "estimator_class": model.__class__.__name__,
+            "estimator_package": _package_of(type(model)),
             "params": self.convert_to_serializable(params),
             "param_types": param_types,
             "param_dtypes": param_dtypes,
@@ -1198,16 +1709,20 @@ class SklearnSerializer(
         """
         Recursively walk an already-serialized estimator dict (params/attributes, however
         deeply nested) and collect the top-level package name of every estimator class found
-        in it, via the same class registry used to deserialize them - this is what lets a
-        composite estimator mixing packages (e.g. a scikit-learn `Pipeline` with a
-        third-party step) report every package involved, not just the outermost one.
+        in it, from each node's own "estimator_package" - this is what lets a composite
+        estimator mixing packages (e.g. a scikit-learn `Pipeline` with a third-party step)
+        report every package involved, not just the outermost one. Nodes without the field
+        fall back to the bare-name class registry.
         """
         if isinstance(serialized, dict):
             estimator_class = serialized.get("estimator_class")
             if estimator_class is not None:
-                cls = self._all_estimators.get(estimator_class)
-                if cls is not None:
-                    names.add(cls.__module__.split(".")[0])
+                package = serialized.get("estimator_package")
+                if package is None:
+                    cls = self._by_name.get(estimator_class)
+                    package = _package_of(cls) if cls is not None else None
+                if package is not None:
+                    names.add(package)
             for value in serialized.values():
                 self._collect_package_names(value, names)
         elif isinstance(serialized, (list, tuple)):
@@ -1320,6 +1835,7 @@ class SklearnSerializer(
         )
         self._check_format_version(format_version)
 
+        self._ambiguity_warned = set()
         return self._deserialize_core(data)
 
     def _deserialize_core(self, data: Dict[str, Any]) -> BaseEstimator:
@@ -1348,7 +1864,7 @@ class SklearnSerializer(
                 params[key] = tuple(value)
 
         # Get valid constructor arguments for the estimator
-        estimator_cls = self._all_estimators[estimator_class]
+        estimator_cls = self._resolve_class(data)
         valid_args = list(inspect.signature(estimator_cls.__init__).parameters.keys())
         # Remove 'self' if present
         valid_args = [arg for arg in valid_args if arg != "self"]
@@ -1358,34 +1874,40 @@ class SklearnSerializer(
             # Only include params that are valid constructor arguments
             if param_name not in valid_args:
                 continue
-            # Handle PatchExtractor's 'patch_size' parameter
-            if (
-                estimator_class == "PatchExtractor"
-                and param_name == "patch_size"
-                and isinstance(param_value, list)
-            ):
-                param_value = tuple(param_value)
             param_type = param_types.get(param_name)
             param_dtype = param_dtypes.get(param_name) or None
-            reconstructed_params[param_name] = self.convert_from_serializable(
-                param_value, param_type, param_dtype
+            reconstructed_params[param_name] = _restore_tuple_param(
+                estimator_cls,
+                param_name,
+                self.convert_from_serializable(param_value, param_type, param_dtype),
             )
         model = estimator_cls(**reconstructed_params)
 
         if "attributes" not in data:
             return model  # Unfitted model
 
+        # A neighbors estimator's search tree is rebuilt after the loop from the estimator's
+        # own state; a stored one (which lacks the metric and leaf_size) isn't loaded then.
+        rebuilds_tree = isinstance(model, NeighborsBase) and all(
+            key in data["attributes"] for key in _NEIGHBORS_TREE_INPUTS
+        )
         for attribute, value in data["attributes"].items():
             attr_type = data["attribute_types"].get(attribute)
             attr_dtype = data.get("attribute_dtypes", {}).get(attribute) or None
 
+            if attribute == "_tree" and rebuilds_tree:
+                continue
             # Handle tree_ separately
             if attr_type == "Tree":
                 model.tree_ = self._deserialize_tree(value)
                 continue
-            # Skip _tree attribute for KDTree - let the transformer recreate it
-            if attr_type == "KDTree":
-                model._tree = self._deserialize_kdtree(value)
+            # Search trees (a neighbors estimator's `_tree`, KernelDensity's `tree_`), restored
+            # under the attribute's own name; their owners rebuild them after the loop.
+            if attr_type in ("KDTree", "BallTree"):
+                tree_cls = KDTree if attr_type == "KDTree" else BallTree
+                setattr(
+                    model, attribute, self._deserialize_search_tree(value, tree_cls)
+                )
                 continue
             # Use convert_from_serializable for all attributes
             setattr(
@@ -1396,5 +1918,8 @@ class SklearnSerializer(
 
         if estimator_class == "Birch" and self._birch_pending_leaf_links:
             self._resolve_birch_leaf_links()
+        self._rebuild_neighbors_tree(model)
+        self._rebuild_kernel_density_tree(model)
+        self._rebuild_derived_attributes(model)
 
         return model
