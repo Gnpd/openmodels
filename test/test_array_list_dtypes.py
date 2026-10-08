@@ -32,7 +32,10 @@ def _attribute_dtypes(model):
 @pytest.mark.parametrize("format_name", ["json", "pickle"])
 @pytest.mark.parametrize(
     "model, y",
-    [(MLPRegressor(max_iter=5), Y_REG), (MLPClassifier(max_iter=5), Y_CLF)],
+    [
+        (MLPRegressor(max_iter=5, random_state=0), Y_REG),
+        (MLPClassifier(max_iter=5, random_state=0), Y_CLF),
+    ],
     ids=["MLPRegressor", "MLPClassifier"],
 )
 def test_float32_mlp_keeps_float32(model, y, format_name):
@@ -53,7 +56,9 @@ def test_float32_mlp_keeps_float32(model, y, format_name):
 
 def test_float64_mlp_writes_no_dtype_list():
     # What 0.2.2 can read: lists of arrays their values rebuild exactly get no dtype list.
-    model = MLPRegressor(max_iter=5).fit(X.astype(np.float64), Y_REG.astype(np.float64))
+    model = MLPRegressor(max_iter=5, random_state=0).fit(
+        X.astype(np.float64), Y_REG.astype(np.float64)
+    )
     dtypes = _attribute_dtypes(model)
     assert dtypes["coefs_"] == ""
     assert dtypes["intercepts_"] == ""
@@ -82,10 +87,14 @@ def test_mixed_list_keeps_every_dtype(arrays):
 
 def test_file_without_dtype_list_loads_as_before():
     # Files written before the dtype list existed: arrays are rebuilt from their values.
-    model = MLPRegressor(max_iter=5).fit(X, Y_REG)
+    model = MLPRegressor(max_iter=5, random_state=0).fit(X, Y_REG)
     data = SklearnSerializer().serialize(model)
     data["attribute_dtypes"]["coefs_"] = ""
     data["attribute_dtypes"]["intercepts_"] = ""
     loaded = SklearnSerializer().deserialize(data)
     assert [a.dtype for a in loaded.coefs_] == [np.float64, np.float64]
-    np.testing.assert_allclose(loaded.predict(X), model.predict(X), rtol=1e-5)
+    # The float64 copy differs from the float32 model by float32 rounding (~1e-7), so an
+    # absolute tolerance is needed for predictions close to zero.
+    np.testing.assert_allclose(
+        loaded.predict(X), model.predict(X), rtol=1e-5, atol=1e-6
+    )
