@@ -5,7 +5,7 @@ All notable changes to the OpenModels project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.3] - 2026-10-05
+## [0.2.3] - 2026-10-07
 
 ### Security
 
@@ -166,6 +166,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RandomState` you created) lose that object when saved by name, so `serialize()` now raises
   `SerializationError` for them; files written by earlier versions holding one raise
   `DeserializationError` on load
+- With scikit-learn 1.6, a fitted `ColumnTransformer` whose columns are selected by name (e.g.
+  fitted on a pandas DataFrame) or by boolean mask couldn't be saved: `SerializationError:
+  Object of type _RemainderColsList is not JSON serializable`. Any `collections.UserList` is now
+  saved, and loads, as its plain list
 
 ### Added
 

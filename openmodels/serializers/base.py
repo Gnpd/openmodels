@@ -12,6 +12,7 @@ import importlib
 import inspect
 import sys
 import warnings
+from collections import UserList
 from types import ModuleType
 
 import numpy as np
@@ -129,6 +130,12 @@ class SerializerMixin:
 
         if isinstance(value, (list, tuple)):
             return [self.convert_to_serializable(v) for v in value]
+
+        # A UserList isn't a list subclass; it's saved, and loads, as its plain list. E.g.
+        # scikit-learn 1.6's ColumnTransformer keeps its remainder columns in one that warns
+        # when indexed, so its `.data` is read directly.
+        if isinstance(value, UserList):
+            return self.convert_to_serializable(value.data)
 
         return value
 

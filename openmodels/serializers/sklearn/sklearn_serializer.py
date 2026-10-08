@@ -17,6 +17,7 @@ from typing import (
     Optional,
     Union,
 )
+from collections import UserList
 from importlib.metadata import version as _package_version, PackageNotFoundError
 from datetime import datetime, timezone
 import platform
@@ -686,7 +687,9 @@ class SklearnSerializer(
                 return {"tuple": [self._get_nested_types(s, True) for s in item]}
             return tuple(self._get_nested_types(subitem) for subitem in item)
 
-        # Handle lists
+        # Handle lists; a UserList is saved as its plain list (see convert_to_serializable).
+        if isinstance(item, UserList):
+            item = item.data
         if isinstance(item, list):
             return [self._get_nested_types(subitem, in_dict) for subitem in item]
 

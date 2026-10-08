@@ -1,3 +1,8 @@
+import json
+from collections import UserList
+
+import numpy as np
+
 from openmodels.serializers.base import SerializerMixin
 
 
@@ -48,3 +53,30 @@ def test_envelope_dict_from_older_files_round_trips():
     restored = mixin.convert_from_serializable(envelope, "dict")
     assert restored == {1: "a", "x": "b", 2.5: "c"}
     assert {type(k) for k in restored} == {int, str, float}
+
+
+class _WarningList(UserList):
+    """Like scikit-learn 1.6's _RemainderColsList: indexing it warns."""
+
+    def __getitem__(self, index):
+        raise AssertionError("the list was indexed")
+
+
+def test_user_list_saved_as_plain_list_without_indexing_it():
+    from sklearn.compose import ColumnTransformer
+    from sklearn.preprocessing import StandardScaler
+
+    from openmodels import SklearnSerializer
+
+    serializer = SklearnSerializer()
+    value = ("remainder", "drop", _WarningList([2, 3]))
+    written = json.loads(json.dumps(serializer.convert_to_serializable(value)))
+    assert written == ["remainder", "drop", [2, 3]]
+    assert serializer._get_nested_types(value) == ("str", "str", ["int", "int"])
+
+    # As scikit-learn 1.6 stores it in a fitted ColumnTransformer's transformers_.
+    model = ColumnTransformer([("s", StandardScaler(), [0])]).fit(np.ones((3, 4)))
+    name, transformer, _ = model.transformers_[-1]
+    model.transformers_[-1] = (name, transformer, _WarningList([1, 2, 3]))
+    loaded = serializer.deserialize(json.loads(json.dumps(serializer.serialize(model))))
+    assert loaded.transformers_[-1][-1] == [1, 2, 3]
