@@ -28,8 +28,9 @@ language = "en"
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-# Mock imports that may not be available when building docs
-autodoc_mock_imports = ["sklearn", "numpy", "scipy"]
+# No autodoc_mock_imports: the docs build installs the real numpy, scipy and scikit-learn
+# (`poetry install --with docs`), and openmodels computes values from them at import time
+# (e.g. NumPy's scalar types), which fails on mocked modules.
 
 # Disable translation/gettext support
 gettext_auto_build = False
