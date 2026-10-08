@@ -980,6 +980,7 @@ class SklearnSerializer(
     def _deserialize_masked_array(self, data: Dict[str, Any]) -> np.ma.MaskedArray:
         shape = tuple(data["shape"])
         mask = np.array(data["mask"], dtype=bool).reshape(shape)
+        values: np.ndarray
         if "types" in data:
             items = [
                 self.convert_from_serializable(item, item_type)

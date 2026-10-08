@@ -270,13 +270,14 @@ PER_CHECK_CONSTRUCTOR_OVERRIDES: dict = {
     },
 }
 
-# The coordinate-descent CV estimators don't converge on the sample-weight equivalence checks'
-# data with their default max_iter (the final refit stops at max_iter=1000 with a
-# ConvergenceWarning). Two unconverged fits on weighted vs repeated rows only agree when every
-# floating-point operation happens in the same order, so the check passed locally but failed
-# for LassoCV on CI (Linux, Python 3.13), with a 23% relative difference in predictions. With
-# these settings every fit converges (a few thousand iterations), so the weighted and repeated
-# solutions coincide on any platform.
+# With their default tol=1e-4 and max_iter=1000, the coordinate-descent CV estimators stop
+# short of the exact solution on the sample-weight equivalence checks' data: locally the final
+# refit hits max_iter (ConvergenceWarning), while on CI (Linux, Python 3.13) LassoCV stopped
+# within tol without a warning. Either way, the weighted and repeated fits stop at different
+# points, so they only agree when every floating-point operation happens in the same order:
+# the check passed locally but failed for LassoCV on CI, with predictions up to 0.0024 apart.
+# With these settings every fit converges to the exact solution (a few thousand iterations), so
+# the weighted and repeated fits coincide on any platform.
 _CONVERGED_COORDINATE_DESCENT = {"max_iter": 100_000, "tol": 1e-10}
 PER_CHECK_CONSTRUCTOR_OVERRIDES.update(
     {
