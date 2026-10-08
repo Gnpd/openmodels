@@ -290,6 +290,10 @@ class SerializerMixin:
         run its import-time side effects. Private names, ``__main__`` modules and anything
         that isn't a plain function, builtin, NumPy ufunc or a bound method the module exposes
         by name (np.random.rand) are refused.
+
+        The function's own module (its ``__module__``) must be allowed the same way, since
+        allowed modules re-export functions from elsewhere: sklearn.datasets._base.makedirs
+        is os.makedirs, and sklearn.utils._testing.check_output is subprocess.check_output.
         """
         module_name, name = data.get("module"), data.get("name")
         obj = None
@@ -314,6 +318,19 @@ class SerializerMixin:
             raise DeserializationError(
                 f"function '{module_name}.{name}' is not allowed; pass "
                 f"trusted_function_modules=[...] to permit it"
+            )
+        own_module = getattr(obj, "__module__", None) or _find_function_module(obj)
+        if not (
+            isinstance(own_module, str)
+            and "__main__" not in own_module.split(".")
+            and (
+                self._is_trusted_function_module(own_module)
+                or own_module.split(".")[0] in self._allowed_function_roots()
+            )
+        ):
+            raise DeserializationError(
+                f"function '{module_name}.{name}' is defined in '{own_module}', which is "
+                f"not allowed; pass trusted_function_modules=[...] to permit it"
             )
         return obj
 

@@ -63,8 +63,9 @@ default, it's human-readable, and it doesn't carry this risk.
 Some estimators take a function as a parameter, e.g. a `FunctionTransformer`'s `func` or a
 `SelectKBest`'s `score_func`. The file stores these by module and name. Loading never imports
 a module named by the file, and only accepts functions from numpy, scipy, scikit-learn and the
-packages of your registered `custom_estimators`. Any other function reference raises
-`DeserializationError`.
+packages of your registered `custom_estimators`, checked against the module each function is
+defined in, so functions those packages merely re-export (e.g. `os.makedirs`) are refused. Any
+other function reference raises `DeserializationError`.
 
 To load models that use your own functions, list their modules explicitly:
 `SklearnSerializer(trusted_function_modules=["mypkg"])`. Those modules (and their submodules)

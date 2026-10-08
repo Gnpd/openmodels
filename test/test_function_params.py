@@ -4,6 +4,7 @@ Functions passed as parameters must load as the identical object: NumPy/SciPy uf
 plain functions. Builtins are outside the function allowlist unless explicitly trusted.
 """
 
+import importlib
 import json
 
 import numpy as np
@@ -91,6 +92,53 @@ def test_builtin_allowed_when_trusted():
     trusted = SklearnSerializer(trusted_function_modules=["builtins"])
     loaded = _roundtrip(FunctionTransformer(func=abs).fit(X), trusted)
     assert loaded.func is abs
+
+
+# ==== re-exports: the function's own module must be allowed ====
+
+# Allowed modules that re-export functions from modules outside the allowlist.
+REEXPORTS = [
+    ("sklearn.datasets._base", "makedirs"),  # os.makedirs
+    ("sklearn.utils._testing", "check_output"),  # subprocess.check_output
+    ("scipy._lib.deprecation", "import_module"),  # importlib.import_module
+]
+
+
+def _reexported(module_name, name):
+    try:
+        func = getattr(importlib.import_module(module_name), name)
+    except (ImportError, AttributeError):
+        pytest.skip(f"{module_name}.{name} doesn't exist in this version")
+    return func
+
+
+@pytest.mark.parametrize("module_name, name", REEXPORTS)
+def test_reexported_function_refused(module_name, name):
+    func = _reexported(module_name, name)
+    with pytest.raises(DeserializationError, match=f"defined in '{func.__module__}'"):
+        SklearnSerializer().convert_from_serializable(
+            {"module": module_name, "name": name}, "function"
+        )
+
+
+def test_reexported_function_in_a_file_refused():
+    _reexported("sklearn.datasets._base", "makedirs")
+    manager = SerializationManager(SklearnSerializer())
+    data = json.loads(manager.serialize(FunctionTransformer(func=np.log1p).fit(X)))
+    data["params"]["func"] = {"module": "sklearn.datasets._base", "name": "makedirs"}
+    data["param_types"]["func"] = "function"
+    with pytest.raises(DeserializationError, match="defined in 'os'"):
+        manager.deserialize(json.dumps(data))
+
+
+@pytest.mark.parametrize("module_name, name", REEXPORTS)
+def test_reexported_function_allowed_when_its_module_is_trusted(module_name, name):
+    func = _reexported(module_name, name)
+    trusted = SklearnSerializer(trusted_function_modules=[func.__module__])
+    loaded = trusted.convert_from_serializable(
+        {"module": module_name, "name": name}, "function"
+    )
+    assert loaded is func
 
 
 # ==== bound methods ====

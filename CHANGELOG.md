@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FunctionTransformer` `func`) are no longer imported from whatever module the file names. A
   function is only returned if it's a plain function, builtin or NumPy ufunc from an
   already-imported module of numpy, scipy, scikit-learn or a registered custom estimator's
-  package; private names and `__main__` are refused. Anything else raises
+  package, and if the module it's defined in (its `__module__`) is one of those too, so a
+  re-export such as `sklearn.datasets._base.makedirs` (`os.makedirs`) is refused; private
+  names and `__main__` are refused. Anything else raises
   `DeserializationError`. Files referencing your own functions need the new
   `SklearnSerializer(trusted_function_modules=[...])`, which also allows importing those modules
 - A Gaussian-process kernel's `kernel_type` read from a file must now name a `Kernel` class;
