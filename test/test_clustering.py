@@ -8,9 +8,11 @@ from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTI
 
 # Get all cluster estimators, filtering out not supported clusters
 CLUSTERS = [
-    cls for name, cls in all_estimators(type_filter="cluster")
+    cls
+    for name, cls in all_estimators(type_filter="cluster")
     if name not in NOT_SUPPORTED_ESTIMATORS
 ]
+
 
 @pytest.fixture(scope="module")
 def data():

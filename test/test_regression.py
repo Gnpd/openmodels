@@ -11,8 +11,12 @@ from openmodels.serializers.sklearn.sklearn_serializer import NOT_SUPPORTED_ESTI
 from test._estimator_construction import CONSTRUCTOR_ARGS
 
 # Get all regressor estimators, filtering out not supported regressors
-REGRESSORS = [cls for name, cls in all_estimators(type_filter="regressor")
-    if name not in NOT_SUPPORTED_ESTIMATORS]
+REGRESSORS = [
+    cls
+    for name, cls in all_estimators(type_filter="regressor")
+    if name not in NOT_SUPPORTED_ESTIMATORS
+]
+
 
 @pytest.fixture(scope="module")
 def data():
@@ -42,7 +46,7 @@ def data():
 
 @pytest.mark.parametrize("Regressor", REGRESSORS)
 def test_regressor(Regressor, data):
-    x, y, x_sparse, y_sparse  = data
+    x, y, x_sparse, y_sparse = data
 
     args = {}
     # Handle specific regressors that require special treatment
@@ -55,11 +59,16 @@ def test_regressor(Regressor, data):
         x_sparse = None
         y_sparse = None
     elif Regressor.__name__ == "PLSRegression":
-        x = [[0., 0., 1.], [1.,0.,0.], [2.,2.,2.], [2.,5.,4.]]
-        y = [[0.1, -0.2], [0.9, 1.1], [6.2, 5.9], [11.9, 12.3]] 
+        x = [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [2.0, 2.0, 2.0], [2.0, 5.0, 4.0]]
+        y = [[0.1, -0.2], [0.9, 1.1], [6.2, 5.9], [11.9, 12.3]]
         x_sparse = None
         y_sparse = None
-    elif Regressor.__name__ in ["MultiTaskElasticNet", "MultiTaskElasticNetCV", "MultiTaskLasso", "MultiTaskLassoCV"]:
+    elif Regressor.__name__ in [
+        "MultiTaskElasticNet",
+        "MultiTaskElasticNetCV",
+        "MultiTaskLasso",
+        "MultiTaskLassoCV",
+    ]:
         x, y = make_regression(n_samples=50, n_features=3, n_targets=2, random_state=42)
         x_sparse = None
         y_sparse = None
@@ -76,55 +85,49 @@ def test_regressor(Regressor, data):
 
     elif Regressor.__name__ == "StackingRegressor":
         # Create simpler base estimators that are easier to serialize
-        estimators = [
-            ('lr1', LinearRegression()),
-            ('lr2', LinearRegression())
-        ]
+        estimators = [("lr1", LinearRegression()), ("lr2", LinearRegression())]
         # Use a simple final estimator
         final_estimator = LinearRegression()
-        
+
         # Create multi-output data since StackingRegressor works better with it
-        x, y = make_regression(
-            n_samples=50, 
-            n_features=3, 
-            n_targets=1, 
-            random_state=42
-        )
-        x_sparse = None
-        y_sparse = None
-        
-        args = {
-            "estimators": estimators,
-            "final_estimator": final_estimator,
-            "cv": 3  # Add cross-validation folds
-        }
-    elif Regressor.__name__ == "VotingRegressor":
-        # VotingRegressor expects a list of (name, estimator) tuples
-        estimators = [
-            ('lr', LinearRegression()),
-            ('rf', RandomForestRegressor(n_estimators=10, random_state=42))
-        ]
-        x, y = make_regression(
-            n_samples=50,
-            n_features=3,
-            n_targets=1,
-            random_state=42
-        )
+        x, y = make_regression(n_samples=50, n_features=3, n_targets=1, random_state=42)
         x_sparse = None
         y_sparse = None
 
         args = {
-            "estimators": estimators
+            "estimators": estimators,
+            "final_estimator": final_estimator,
+            "cv": 3,  # Add cross-validation folds
         }
+    elif Regressor.__name__ == "VotingRegressor":
+        # VotingRegressor expects a list of (name, estimator) tuples
+        estimators = [
+            ("lr", LinearRegression()),
+            ("rf", RandomForestRegressor(n_estimators=10, random_state=42)),
+        ]
+        x, y = make_regression(n_samples=50, n_features=3, n_targets=1, random_state=42)
+        x_sparse = None
+        y_sparse = None
+
+        args = {"estimators": estimators}
 
     regressor = Regressor(**args)
 
     try:
         # Try with sparse input
-        run_test_model(regressor, x, y, x_sparse, y_sparse, f"{Regressor.__name__.lower()}.json")
+        run_test_model(
+            regressor, x, y, x_sparse, y_sparse, f"{Regressor.__name__.lower()}.json"
+        )
     except TypeError as e:
         if "Sparse data was passed" in str(e):
             # Retry with dense input
-            run_test_model(regressor, x, y, x_sparse.toarray(), y_sparse, f"{Regressor.__name__.lower()}.json")
+            run_test_model(
+                regressor,
+                x,
+                y,
+                x_sparse.toarray(),
+                y_sparse,
+                f"{Regressor.__name__.lower()}.json",
+            )
         else:
             raise

@@ -2,7 +2,10 @@ import pytest
 from sklearn.utils.discovery import all_estimators
 from sklearn.datasets import make_classification
 from openmodels.test_helpers import run_test_model
-from openmodels.serializers.sklearn.sklearn_serializer import ALL_ESTIMATORS, NOT_SUPPORTED_ESTIMATORS
+from openmodels.serializers.sklearn.sklearn_serializer import (
+    ALL_ESTIMATORS,
+    NOT_SUPPORTED_ESTIMATORS,
+)
 from test.test_classification import CLASSIFIERS
 from test.test_clustering import CLUSTERS
 from test.test_regression import REGRESSORS
@@ -15,11 +18,13 @@ from test._estimator_construction import CONSTRUCTOR_ARGS
 # experimental-only estimator (e.g. HalvingGridSearchCV) that becomes discoverable later in the
 # process - such as importing sklearn.utils.estimator_checks, which enables it as a side effect -
 # would be constructible here but not actually deserializable by openmodels, raising KeyError.
-OTHERS = [cls for name, cls in all_estimators()
-        if cls not in CLASSIFIERS + CLUSTERS + REGRESSORS + TRANSFORMERS
-        and name not in NOT_SUPPORTED_ESTIMATORS
-        and name in ALL_ESTIMATORS
-        ]
+OTHERS = [
+    cls
+    for name, cls in all_estimators()
+    if cls not in CLASSIFIERS + CLUSTERS + REGRESSORS + TRANSFORMERS
+    and name not in NOT_SUPPORTED_ESTIMATORS
+    and name in ALL_ESTIMATORS
+]
 
 # Define constants
 N_SAMPLES = 50
@@ -52,6 +57,7 @@ def data():
 
     return x, y
 
+
 @pytest.mark.parametrize("Others", OTHERS)
 def test_others(Others, data):
     x, y = data
@@ -65,16 +71,18 @@ def test_others(Others, data):
             "another test document",
             "text data for vectorizer",
             "machine learning is fun",
-            "openmodels serialization test"
+            "openmodels serialization test",
         ]
         y = None  # y is not used for vectorizers
     if Others.__name__ == "FrozenEstimator":
         from sklearn.linear_model import LogisticRegression
+
         base_estimator = LogisticRegression()
         base_estimator.fit(x, y)
         args["estimator"] = base_estimator
     if Others.__name__ == "GridSearchCV":
         from sklearn.linear_model import LogisticRegression
+
         # Define a simple parameter grid
         param_grid = {"C": [0.1, 1.0]}
         # Use a simple base estimator
@@ -84,14 +92,16 @@ def test_others(Others, data):
     if Others.__name__ == "Pipeline":
         from sklearn.preprocessing import StandardScaler
         from sklearn.linear_model import LogisticRegression
+
         # Example pipeline: scaler + classifier
         args["steps"] = [
             ("scaler", StandardScaler()),
-            ("clf", LogisticRegression())  # The last step must be a predictor!
-    ]
+            ("clf", LogisticRegression()),  # The last step must be a predictor!
+        ]
     if Others.__name__ == "RandomizedSearchCV":
         from sklearn.linear_model import LogisticRegression
         from scipy.stats import uniform
+
         # Define a simple parameter distribution
         param_distributions = {"C": uniform(0.1, 1.0)}
         # Use a simple base estimator
@@ -100,11 +110,13 @@ def test_others(Others, data):
         args["param_distributions"] = param_distributions
     if Others.__name__ == "HalvingGridSearchCV":
         from sklearn.linear_model import LogisticRegression
+
         args["estimator"] = LogisticRegression()
         args["param_grid"] = {"C": [0.1, 1.0]}
     if Others.__name__ == "HalvingRandomSearchCV":
         from sklearn.linear_model import LogisticRegression
         from scipy.stats import uniform
+
         args["estimator"] = LogisticRegression()
         args["param_distributions"] = {"C": uniform(0.1, 1.0)}
     if Others.__name__ == "LocalOutlierFactor":
@@ -114,4 +126,3 @@ def test_others(Others, data):
 
     # Run the test model
     run_test_model(others, x, y, None, None, f"{Others.__name__.lower()}.json")
- 

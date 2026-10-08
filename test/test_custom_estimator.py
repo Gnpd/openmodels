@@ -18,10 +18,13 @@ class NotEstimator:
 
 # ==== is_valid_estimator ====
 
+
 def test_is_valid_estimator_true():
     from sklearn.base import BaseEstimator
+
     class MyEstimator(BaseEstimator):
         pass
+
     assert _custom_estimator.is_valid_estimator("MyEstimator", MyEstimator)
 
 
@@ -40,11 +43,13 @@ def test_is_valid_estimator_typeerror():
     # cls is an instance, triggering TypeError inside issubclass
     class Fake:
         pass
+
     fake_instance = Fake()
     assert not _custom_estimator.is_valid_estimator("FakeInstance", fake_instance)
 
 
 # ==== normalize_estimators ====
+
 
 def test_normalize_estimators_list():
     ests = [DummyEstimator, DummyEstimator]
@@ -67,10 +72,13 @@ def test_normalize_estimators_tuple_and_set():
 
 # ==== load_custom_estimators ====
 
+
 def test_load_custom_estimators_dict():
     from sklearn.base import BaseEstimator
+
     class MyEstimator(BaseEstimator):
         pass
+
     custom = {"MyEstimator": MyEstimator}
     all_estimators = {}
     result = _custom_estimator.load_custom_estimators(custom, all_estimators)
@@ -80,10 +88,13 @@ def test_load_custom_estimators_dict():
 
 def test_load_custom_estimators_callable():
     from sklearn.base import BaseEstimator
+
     class MyEstimator(BaseEstimator):
         pass
+
     def custom_callable():
         return [("MyEstimator", MyEstimator)]
+
     all_estimators = {}
     result = _custom_estimator.load_custom_estimators(custom_callable, all_estimators)
     assert "MyEstimator" in result
@@ -93,6 +104,7 @@ def test_load_custom_estimators_callable():
 def test_load_custom_estimators_invalid():
     def bad_callable():
         return [("Bad", NotEstimator)]
+
     all_estimators = {}
     result = _custom_estimator.load_custom_estimators(bad_callable, all_estimators)
     assert result == {}
@@ -102,6 +114,7 @@ def test_load_custom_estimators_callable_raises():
     # Covers line 36-38: callable raises exception
     def bad_callable():
         raise ValueError("fail")
+
     all_estimators = {}
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -114,6 +127,7 @@ def test_load_custom_estimators_callable_returns_none():
     # Covers line 41: callable returns None
     def none_callable():
         return None
+
     all_estimators = {}
     result = _custom_estimator.load_custom_estimators(none_callable, all_estimators)
     assert result == {}
@@ -123,10 +137,13 @@ def test_load_custom_estimators_item_unpack_fail():
     # Covers lines 51-55: bad iterable unpacking
     def weird_callable():
         return [["badformat"]]
+
     all_estimators = {}
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = _custom_estimator.load_custom_estimators(weird_callable, all_estimators)
+        result = _custom_estimator.load_custom_estimators(
+            weird_callable, all_estimators
+        )
         assert result == {}
         assert any("Unexpected" in str(x.message) for x in w)
 
@@ -134,25 +151,35 @@ def test_load_custom_estimators_item_unpack_fail():
 def test_load_custom_estimators_conflict_warning():
     # Covers line 61: estimator name conflict
     from sklearn.base import BaseEstimator
+
     class MyEstimator(BaseEstimator):
         pass
+
     def custom_callable():
         return [("MyEstimator", MyEstimator)]
+
     all_estimators = {"MyEstimator": object}
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result = _custom_estimator.load_custom_estimators(custom_callable, all_estimators)
+        result = _custom_estimator.load_custom_estimators(
+            custom_callable, all_estimators
+        )
         assert "MyEstimator" in result
         assert any("conflicts" in str(x.message) for x in w)
+
 
 def test_is_valid_estimator_typeerror_branch(monkeypatch):
     # Force inspect.isclass to return True so code reaches issubclass
     monkeypatch.setattr(inspect, "isclass", lambda x: True)
+
     # Passing an instance so issubclass(...) raises TypeError
-    class Dummy: pass
+    class Dummy:
+        pass
+
     dummy_instance = Dummy()
     result = _custom_estimator.is_valid_estimator("BadEstimator", dummy_instance)
     assert result is False
+
 
 # ==== (name, class) pairs ====
 
@@ -170,7 +197,11 @@ def _pair_sources():
 
 
 def _registered(serializer):
-    return {name: cls for name, cls in serializer._by_name.items() if cls in (PairEstimatorA, PairEstimatorB)}
+    return {
+        name: cls
+        for name, cls in serializer._by_name.items()
+        if cls in (PairEstimatorA, PairEstimatorB)
+    }
 
 
 def _no_warnings(fn):
@@ -191,11 +222,16 @@ def _no_warnings(fn):
 )
 def test_serializer_registers_pairs(custom):
     serializer = _no_warnings(lambda: SklearnSerializer(custom_estimators=custom))
-    assert _registered(serializer) == {"PairEstimatorA": PairEstimatorA, "PairEstimatorB": PairEstimatorB}
+    assert _registered(serializer) == {
+        "PairEstimatorA": PairEstimatorA,
+        "PairEstimatorB": PairEstimatorB,
+    }
 
 
 def test_serializer_registers_single_pair():
-    serializer = _no_warnings(lambda: SklearnSerializer(custom_estimators=("PairEstimatorA", PairEstimatorA)))
+    serializer = _no_warnings(
+        lambda: SklearnSerializer(custom_estimators=("PairEstimatorA", PairEstimatorA))
+    )
     assert _registered(serializer) == {"PairEstimatorA": PairEstimatorA}
 
 
@@ -220,16 +256,25 @@ def test_existing_source_forms_still_register(custom):
 def test_normalize_estimators_wraps_pairs():
     pair_a = ("PairEstimatorA", PairEstimatorA)
     assert _custom_estimator.normalize_estimators(pair_a) == [[pair_a]]
-    assert _custom_estimator.normalize_estimators([pair_a, _pair_sources]) == [[pair_a], _pair_sources]
+    assert _custom_estimator.normalize_estimators([pair_a, _pair_sources]) == [
+        [pair_a],
+        _pair_sources,
+    ]
 
 
 def test_pair_with_invalid_class_is_skipped_silently():
-    result = _no_warnings(lambda: _custom_estimator.load_custom_estimators([("Bad", NotEstimator)], {}))
+    result = _no_warnings(
+        lambda: _custom_estimator.load_custom_estimators([("Bad", NotEstimator)], {})
+    )
     assert result == {}
 
 
-@pytest.mark.parametrize("element", [42, ["badformat"]], ids=["not_iterable", "not_a_pair"])
+@pytest.mark.parametrize(
+    "element", [42, ["badformat"]], ids=["not_iterable", "not_a_pair"]
+)
 def test_malformed_element_warns(element):
     with pytest.warns(UserWarning, match="Unexpected custom_estimator format"):
-        result = _custom_estimator.load_custom_estimators([("PairEstimatorA", PairEstimatorA), element], {})
+        result = _custom_estimator.load_custom_estimators(
+            [("PairEstimatorA", PairEstimatorA), element], {}
+        )
     assert result == {"PairEstimatorA": PairEstimatorA}
