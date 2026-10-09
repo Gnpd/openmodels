@@ -71,8 +71,11 @@ def _transformer_data(name, x, y, x_sparse):
         x = [{"foo": 1, "bar": 2}, {"foo": 3, "baz": 1}]
         x_sparse = None
     if name in ["GaussianRandomProjection"]:
+        # An explicit n_components: the default "auto" needs ~2,800 components for 25 samples,
+        # so the data had to have 3,000 features and the saved projection matrix took ~40 s.
         rng = np.random.RandomState(42)
-        x = rng.rand(25, 3000)
+        x = rng.rand(25, 20)
+        args["n_components"] = 5
         args["random_state"] = rng
     if name in ["KernelCenterer"]:
         from sklearn.metrics.pairwise import pairwise_kernels
