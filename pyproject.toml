@@ -63,6 +63,7 @@ sphinx = "^8.0"
 pydata-sphinx-theme = ">=0.15"
 myst-parser = "^4.0"
 numpydoc = "^1.8"
+certifi = ">=2026.10.19"
 
 [build-system]
 requires = ["poetry-core"]
